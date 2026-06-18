@@ -24,4 +24,9 @@ This engine corrects standard programmatic assumptions by accurately tracking $-
 ## How to Run the Engine
 
 1. Clone the repository:
+   ```bash
+   git clone [https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine.git](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine.git)
+2. Install the required dependencies: 
 pip install -r requirements.txt
+3. Execute the pipeline
+python nss_engine.py
