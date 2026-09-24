@@ -802,7 +802,7 @@ flip the label.</p>
 <p>Level, slope and curvature summarise the whole curve in a handful of numbers.</p>
 {embed(fig_factors(r))}
 {embed(fig_pca(r))}
-<details><summary>Correlation with model-free proxies</summary>{_table_html(r.proxy_correlations.to_frame(), "{:.3f}")}</details>
+<details><summary>Correlation with model-free proxies</summary>{_table_html(r.proxy_correlations, "{:.3f}")}</details>
 </section>
 
 <section><h2>Model quality and relative value</h2>
