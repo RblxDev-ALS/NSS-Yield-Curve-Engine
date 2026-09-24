@@ -261,3 +261,38 @@ class TestPanel:
         assert err(CalibrationConfig(lambda_smoothing=1e-3)) < err(
             CalibrationConfig(lambda_smoothing=0.0, ridge=0.0)
         )
+
+
+# U.S. Treasury constant-maturity yields on 2026-09-23 (FRED H.15, percent).
+REAL_2026_09_23 = {
+    1 / 12: 3.99, 0.25: 4.19, 0.5: 4.31, 1: 4.49, 2: 4.85, 3: 4.97,
+    5: 4.99, 7: 5.05, 10: 5.11, 20: 5.45, 30: 5.40,
+}  # fmt: skip
+
+
+class TestRealCurve:
+    """Regression tests on an actual market curve (no network needed)."""
+
+    tau = np.array(list(REAL_2026_09_23))
+    y = np.array(list(REAL_2026_09_23.values()))
+
+    def test_fit_quality(self):
+        res = calibrate(self.tau, self.y)
+        assert res.success
+        assert res.rmse_bp < 8.0  # typical NSS fit to CMT data is a few bp
+        assert abs(res.curve.spread(10, 0.25) - (5.11 - 4.19)) < 0.10
+
+    def test_nss_beats_ns_in_sample(self):
+        nss = calibrate(self.tau, self.y)
+        ns = calibrate(self.tau, self.y, CalibrationConfig(model="ns"))
+        assert nss.rmse_bp < ns.rmse_bp
+
+    def test_twenty_year_trades_cheap(self):
+        # The 20Y bond has sat above the fitted curve since its 2020 reissue.
+        res = calibrate(self.tau, self.y)
+        resid = dict(zip(res.maturities, res.residuals_bp, strict=True))
+        assert resid[20.0] == max(resid.values()) and resid[20.0] > 3.0
+
+    def test_par_fit(self):
+        res = calibrate(self.tau, self.y, CalibrationConfig(target="par"))
+        assert res.success and res.rmse_bp < 8.0
