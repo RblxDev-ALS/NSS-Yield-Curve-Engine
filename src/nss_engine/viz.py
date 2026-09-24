@@ -616,6 +616,8 @@ th:first-child, td:first-child { text-align: left; }
 th { color: var(--ink-2); font-weight: 600; }
 .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .tiles { grid-template-columns: 1fr 1fr; }
+  .tile .value { font-size: 22px; white-space: nowrap; } header h1 { font-size: 24px; } }
 footer { margin-top: 48px; color: var(--muted); font-size: 13px; }
 a { color: var(--accent); }
 """
