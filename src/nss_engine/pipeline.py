@@ -67,7 +67,7 @@ class PipelineResult:
     recession_model: regime.RecessionModel | None
     lead_times: pd.DataFrame | None
     pca: analytics.PCAResult
-    proxy_correlations: pd.Series
+    proxy_correlations: pd.DataFrame
     forecast_eval: forecasting.ForecastEvaluation | None
     forecast_curve: pd.Series | None
     rich_cheap: pd.DataFrame
@@ -160,7 +160,18 @@ def run_pipeline(
     # ---- factor validation --------------------------------------------------------
     say("validating factors (PCA)")
     pca_res = analytics.pca(yields.dropna(axis=1, thresh=int(0.8 * len(yields))))
-    proxy_corr = analytics.factor_proxy_correlations(fit.params, yields)
+    # Free-λ NSS betas vs fixed-λ Diebold-Li factors: with λ free, β0 is an
+    # asymptote beyond the data and −β1 an infinite-maturity spread, so they track
+    # the textbook proxies less closely - which is why regimes use the
+    # model-implied 10y−3m spread rather than −β1.
+    dl = forecasting.extract_factors(yields).set_axis(["beta0", "beta1", "beta2"], axis=1)
+    proxy_corr = pd.DataFrame(
+        {
+            "NSS (free λ)": analytics.factor_proxy_correlations(fit.params, yields),
+            "Diebold-Li (fixed λ)": analytics.factor_proxy_correlations(dl, yields),
+        }
+    )
+    proxy_corr.index.name = "factor ~ proxy"
 
     # ---- forecasts ------------------------------------------------------------------
     fc_eval, fc_curve = None, None
@@ -278,7 +289,7 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
         "spreads_latest_pct": r.spreads.iloc[-1].to_dict(),
         "spread_tracking": _spread_tracking(r.spreads),
         "pca_explained_variance": r.pca.explained_variance_ratio.to_dict(),
-        "factor_proxy_correlations": r.proxy_correlations.to_dict(),
+        "factor_proxy_correlations": r.proxy_correlations.to_dict(orient="index"),
         "rich_cheap_latest": r.rich_cheap.reset_index().to_dict(orient="records"),
         "residual_half_life_weeks": r.half_life.to_dict(),
     }

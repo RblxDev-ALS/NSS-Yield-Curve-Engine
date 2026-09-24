@@ -151,11 +151,20 @@ def render_markdown(r: PipelineResult) -> str:
     add("")
     ev = r.pca.explained_variance_ratio
     add(
-        f"PCA of weekly yield changes: first three components explain "
+        f"PCA of yield changes: first three components explain "
         f"{ev.iloc[0]:.1%} / {ev.iloc[1]:.1%} / {ev.iloc[2]:.1%} (total {ev.sum():.1%})."
     )
     add("")
-    add(_table(r.proxy_correlations.to_frame(), ".3f"))
+    add("Correlation of each factor with its model-free proxy (Diebold & Li, 2006):")
+    add("")
+    add(_table(r.proxy_correlations, ".3f"))
+    add("")
+    add(
+        "With free decay rates, β0 is the curve's asymptote beyond 30 years and −β1 the spread "
+        "between infinite and zero maturity, so raw NSS betas track the proxies less closely "
+        "than fixed-λ factors. The regime engine therefore uses the *model-implied* 10y−3m "
+        "spread, which matches the observed spread almost perfectly."
+    )
     add("")
 
     if r.forecast_eval is not None:
