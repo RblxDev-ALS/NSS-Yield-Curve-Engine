@@ -30,6 +30,7 @@ dev = [
     "hypothesis>=6.90",
     "ruff>=0.5",
     "mypy>=1.8",
+    "tabulate>=0.9",  # DataFrame.to_markdown in benchmarks/
 ]
 
 [project.scripts]
