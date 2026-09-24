@@ -44,7 +44,31 @@ The fit residuals also pick up a real market anomaly. Since it was reintroduced
 in 2020, the **20-year bond** has traded cheap relative to its neighbours (+9 bp
 above the fitted curve in the latest run).
 
-To reproduce: `nss-engine run --source fred --start 1990-01-01`.
+### Does NSS overfit? Leave-one-tenor-out cross-validation
+
+In-sample error always favours the model with more parameters. The honest test
+is out of sample: hide one maturity, fit the rest, and predict the hidden yield.
+This uses 441 month-end curves from 1990 to 2026
+([`benchmarks/real_data_studies.py`](benchmarks/real_data_studies.py)):
+
+| model | out-of-sample RMSE, 3M–20Y (interpolation) | 30Y (extrapolation) |
+|---|---:|---:|
+| Nelson–Siegel (4 parameters) | 9.29 bp | **19.1 bp** |
+| NSS, each date fitted independently | 8.53 bp | 29.1 bp |
+| **NSS + λ smoothing (default)** | **8.31 bp** | 29.2 bp |
+
+NSS's extra parameters genuinely help **between** quoted maturities (11% lower
+out-of-sample error than Nelson–Siegel), and the smoothing penalty helps a
+little more. **Beyond** the last quote the extra flexibility hurts: with the 30Y
+hidden, NSS bends the long end more than the data supports. So for
+extrapolation, the simpler model is safer.
+
+The same script compares forecast designs. AR(1) vs VAR(1) factor dynamics, and
+expanding vs rolling 10-year windows, all still lose to the random walk (RMSE
+ratios 1.02–1.16). VAR(1) on an expanding window comes closest.
+
+To reproduce: `nss-engine run --source fred --start 1990-01-01` and
+`python benchmarks/real_data_studies.py`.
 
 ## What it does
 
