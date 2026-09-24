@@ -46,7 +46,14 @@ def test_write_outputs(result, tmp_path):
     assert "Synthetic data" in report and "Recession probability" in report
     html = paths["dashboard"].read_text()
     assert html.count("plotly-graph-div") >= 8
+    assert 'src="https://cdn.plot.ly' in html  # default: load plotly.js from the CDN
     assert "prefers-color-scheme: dark" in html
+
+
+def test_offline_dashboard_embeds_plotly(result, tmp_path):
+    paths = write_outputs(result, tmp_path, offline=True)
+    html = paths["dashboard"].read_text()
+    assert 'src="https://cdn.plot.ly' not in html and len(html) > 3_000_000
 
 
 def test_par_target_pipeline(long_market):

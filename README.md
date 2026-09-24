@@ -76,7 +76,8 @@ nss-engine run --source synthetic   # offline demo on a simulated market
 `nss-engine run` writes `output/dashboard.html` (open it in a browser), plus
 `report.md`, `summary.json`, `nss_parameters.csv`, `fitted_yields.csv`,
 `residuals_bp.csv` and `macro_signals.csv`. Useful flags: `--target par`,
-`--model ns`, `--start 2000-01-01`, `--freq ME` (monthly), `--no-forecast`.
+`--model ns`, `--start 2000-01-01`, `--freq ME` (monthly), `--no-forecast`, `--offline`
+(embed plotly.js so the dashboard opens without internet).
 
 As a library:
 

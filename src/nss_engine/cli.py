@@ -71,7 +71,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     result = run_pipeline(
         cfg, progress=lambda m: print(f"[{time.perf_counter() - t0:6.1f}s] {m}", file=sys.stderr)
     )
-    paths = write_outputs(result, args.out, dashboard=not args.no_dashboard)
+    paths = write_outputs(result, args.out, dashboard=not args.no_dashboard, offline=args.offline)
     s = result.summary
     print(
         f"\nAs of {s['as_of']}: regime {s['regime']['current']} "
@@ -147,6 +147,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--out", default="output", help="output directory (default ./output)")
     p_run.add_argument("--no-dashboard", action="store_true", help="skip the HTML dashboard")
     p_run.add_argument("--no-forecast", action="store_true", help="skip the forecast evaluation")
+    p_run.add_argument(
+        "--offline",
+        action="store_true",
+        help="embed plotly.js so the dashboard works without internet",
+    )
     p_run.add_argument("--print-report", action="store_true", help="print the Markdown report")
     p_run.set_defaults(func=cmd_run)
 
