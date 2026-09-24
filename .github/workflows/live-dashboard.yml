@@ -1,0 +1,62 @@
+# Runs the full pipeline on real U.S. Treasury data from FRED.
+#
+# * Every run (any branch) writes the Markdown report to the job summary and uploads all
+#   outputs (CSV, JSON, report, dashboard) as a build artifact.
+# * To publish the dashboard to GitHub Pages, enable Pages with source
+#   "GitHub Actions" (Settings -> Pages) and add the repository variable
+#   DEPLOY_PAGES = true (Settings -> Secrets and variables -> Actions -> Variables).
+name: Live dashboard
+
+on:
+  push: # every push re-validates the engine against real data; only main deploys
+  schedule:
+    - cron: "17 22 * * 1-5" # weekday evenings (UTC), after FRED updates the H.15 data
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-dashboard
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Run pipeline on FRED data
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          nss-engine run --source fred --start 1990-01-01 --out site
+          cp site/dashboard.html site/index.html
+      - name: Publish report to job summary
+        run: cat site/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nss-output
+          path: site/
+      - uses: actions/upload-pages-artifact@v3
+        if: vars.DEPLOY_PAGES == 'true'
+        with:
+          path: site/
+
+  deploy:
+    needs: build
+    if: vars.DEPLOY_PAGES == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
