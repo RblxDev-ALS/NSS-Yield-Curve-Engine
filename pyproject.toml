@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nsscurve"
+version = "2.0.0"
+description = "Nelson-Siegel-Svensson yield curve engine, RV signals and macro regime tracker"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "pandas>=2.2", "scipy>=1.10", "plotly>=5.15"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+nss-engine = "nsscurve.cli:main"
+
+[tool.setuptools]
+packages = ["nsscurve"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+ignore = ["E501", "E731", "B905"]
