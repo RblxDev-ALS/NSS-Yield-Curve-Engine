@@ -42,7 +42,7 @@ problems in the original.
 * PCA validation of the latent factors
 * Interactive dashboard (light/dark), Markdown report, CSV/JSON exports, CLI
 * Synthetic market simulator with known true parameters
-* 116 tests (property-based tests and a real market curve included), 95% coverage, ruff + mypy, CI on
+* 117 tests (property-based tests and a real market curve included), 95% coverage, ruff + mypy, CI on
   Python 3.10–3.13, and a scheduled job that runs the pipeline on live FRED data
 
 ## 0.1 — original prototype
