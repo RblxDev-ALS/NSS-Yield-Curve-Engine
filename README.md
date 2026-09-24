@@ -40,6 +40,12 @@ famously hard to beat in yield forecasting (Duffee, 2002). And the **2022–24 i
 yield-curve recession signal, which lowers the probit's fit compared with
 samples that end in 2019.
 
+A third finding shaped the design. Raw NSS betas are *not* clean economic
+factors. With the decay rates free, −β1 is a zero-to-infinity spread and
+correlates only 0.72 with the observed 10Y−3M. Fixed-λ Diebold–Li factors
+correlate 0.995. So the regime engine reads the slope off the fitted curve
+(0.999) instead of using −β1 as a stand-in for the 10Y−2Y spread.
+
 The fit residuals also pick up a real market anomaly. Since it was reintroduced
 in 2020, the **20-year bond** has traded cheap relative to its neighbours (+9 bp
 above the fitted curve in the latest run).
