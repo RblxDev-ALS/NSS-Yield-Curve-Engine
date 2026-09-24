@@ -37,7 +37,9 @@ jobs:
           nss-engine run --source fred --start 1990-01-01 --out site
           cp site/dashboard.html site/index.html
       - name: Publish report to job summary
-        run: cat site/report.md >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          cat site/report.md >> "$GITHUB_STEP_SUMMARY"
+          cat site/report.md
       - uses: actions/upload-artifact@v4
         with:
           name: nss-output

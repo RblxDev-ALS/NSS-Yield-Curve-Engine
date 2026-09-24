@@ -144,6 +144,8 @@ def test_resample_last_and_mean():
     df.iloc[4, 0] = np.nan  # Friday missing -> 'last' uses Thursday's quote
     weekly = resample_yields(df, "W-FRI", "last")
     assert weekly.iloc[0, 0] == 3.0
+    # Periods are labelled by their last actual observation, never a future date.
+    assert weekly.index[-1] == idx[-1] and weekly.index[0] == idx[3]  # Friday was missing
     assert resample_yields(df, "W-FRI", "mean").iloc[1, 0] == pytest.approx(7.0)
     assert len(resample_yields(df, None)) == 9  # the all-NaN day is dropped
     with pytest.raises(ValueError):
