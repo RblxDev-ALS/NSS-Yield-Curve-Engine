@@ -40,6 +40,11 @@ jobs:
         run: |
           cat site/report.md >> "$GITHUB_STEP_SUMMARY"
           cat site/report.md
+      - name: Model-selection studies (cross-validation, forecast design)
+        run: |
+          pip install tabulate
+          python benchmarks/real_data_studies.py --source fred | tee site/studies.md
+          { echo; echo "---"; echo; cat site/studies.md; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: nss-output
