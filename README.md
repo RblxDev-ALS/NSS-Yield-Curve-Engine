@@ -3,7 +3,7 @@
 [![CI](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml)
 [![Live dashboard](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml)
 ![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
-![Tests](https://img.shields.io/badge/tests-116%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-117%20passing-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
 
 A Python engine that fits the **Nelson–Siegel–Svensson (NSS)** model to the U.S.
@@ -166,7 +166,7 @@ Treasury market** with known true parameters. It follows a dynamic NSS model wit
 a zero lower bound and realistic inversions. The tests and benchmarks can then
 check correctness, not just that the code runs.
 
-* **116 tests, 95% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
+* **117 tests, 95% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
 * **Math identities**: the forward curve integrates back to the zero curve, par
   bonds price at exactly 100, key-rate durations sum to duration, and the level
   factor duration equals duration.
@@ -228,7 +228,7 @@ src/nss_engine/
   forecasting.py   Diebold-Li model, out-of-sample evaluation, Diebold-Mariano
   pipeline.py      end-to-end run and exports
   report.py, viz.py, cli.py
-tests/             116 tests (incl. a real market curve)
+tests/             117 tests (incl. a real market curve)
 benchmarks/        v0-vs-v1 comparison, regularization tuning
 docs/              methodology and references
 ```
