@@ -156,9 +156,14 @@ falls back to Nelson–Siegel, and below 4 it records a failed fit.
   (level, slope, curvature) explain almost all Treasury yield variation. The
   dashboard plots the empirical PCA loadings next to the Nelson–Siegel loadings.
 * **Model-free proxies** (Diebold & Li, 2006): level $=(y_{3m}+y_{2y}+y_{10y})/3$,
-  slope $=y_{10y}-y_{3m}$, curvature $=2y_{2y}-y_{3m}-y_{10y}$. High correlations
-  with $\beta_0$, $-\beta_1$ and $\beta_2$ confirm that the latent factors carry their
-  textbook meaning.
+  slope $=y_{10y}-y_{3m}$, curvature $=2y_{2y}-y_{3m}-y_{10y}$. On 1990–2026 data,
+  the fixed-λ Diebold–Li factors track these proxies closely (correlations 0.84,
+  0.995 and 0.98). The free-λ NSS betas track them less closely (0.59, 0.72 and
+  0.79). With λ free, $\beta_0$ is an asymptote beyond the data and $-\beta_1$ is a
+  zero-to-infinity spread, and both trade off against $\beta_3$ and $\lambda$ from
+  week to week. This is why the regime engine reads its slope off the fitted curve
+  (the model-implied 10Y−3M, correlation 0.999 with the observed spread) rather
+  than using $-\beta_1$ directly.
 
 ## 4. Macro regimes
 
