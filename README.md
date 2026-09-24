@@ -32,13 +32,13 @@ From the latest run of the [live workflow](https://github.com/RblxDev-ALS/NSS-Yi
 | Recession probit (12 months ahead) | $\Phi(-1.05 - 0.39\cdot\text{spread})$, AUC 0.78 |
 | Diebold–Li forecasts vs random walk | the random walk **wins** at 1, 6 and 12 months (RMSE ratios 1.04–1.24) |
 
-Two of these results are negative, and they are reported as such. **Forecasting**
-yields beats "no change" in Diebold & Li's original 1985–2000 sample, but not
-since. A model that mean-reverts to a historical average struggles through
-decades of falling rates and the zero lower bound, and the random walk is
-famously hard to beat in yield forecasting (Duffee, 2002). And the **2022–24 inversion** is the famous false alarm (so far) of the
-yield-curve recession signal, which lowers the probit's fit compared with
-samples that end in 2019.
+Two of these results are negative, and they are reported as such. Diebold & Li's
+model beat "no change" at 12-month horizons in their original 1985–2000 sample,
+but not since. A model that mean-reverts to a historical average struggles
+through decades of falling rates and the zero lower bound, and the random walk
+is famously hard to beat in yield forecasting (Duffee, 2002). And the
+**2022–24 inversion** is the yield-curve recession signal's famous false alarm
+(so far), which weakens the probit's fit.
 
 A third finding shaped the design. Raw NSS betas are *not* clean economic
 factors. With the decay rates free, −β1 is a zero-to-infinity spread and
