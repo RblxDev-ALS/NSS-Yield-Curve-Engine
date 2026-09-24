@@ -225,15 +225,16 @@ def resample_yields(
     the convention for monthly macro regressions (e.g. the NY Fed recession model).
     """
     if freq is None or freq.upper() in ("D", "B", "DAILY"):
-        out = df.copy()
-    else:
-        resampler = df.resample(freq)
-        if how == "last":
-            out = resampler.last()
-        elif how == "mean":
-            out = resampler.mean()
-        else:
-            raise ValueError("how must be 'last' or 'mean'")
+        return df.dropna(how="all")
+    if how not in ("last", "mean"):
+        raise ValueError("how must be 'last' or 'mean'")
+    observed = df.dropna(how="all")
+    resampler = observed.resample(freq)
+    out = resampler.last() if how == "last" else resampler.mean()
+    # Label each period by its last *actual* observation date rather than the
+    # period end, so a partial final week is not stamped with a future Friday.
+    last_obs = pd.Series(observed.index, index=observed.index).resample(freq).max()
+    out.index = pd.DatetimeIndex(last_obs.reindex(out.index).to_numpy(), name=df.index.name)
     return out.dropna(how="all")
 
 

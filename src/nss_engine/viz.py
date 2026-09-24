@@ -195,7 +195,7 @@ def fig_curve_animation(r: PipelineResult, max_frames: int = 160) -> go.Figure:
         sliders=[
             dict(
                 active=len(dates) - 1,
-                currentvalue=dict(prefix="", font=dict(color=INK, size=14)),
+                currentvalue=dict(prefix="", font=dict(size=14)),
                 pad=dict(t=40),
                 steps=[
                     dict(
@@ -217,10 +217,12 @@ def fig_curve_animation(r: PipelineResult, max_frames: int = 160) -> go.Figure:
         updatemenus=[
             dict(
                 type="buttons",
+                direction="left",
                 showactive=False,
-                x=0,
-                y=-0.28,
-                xanchor="left",
+                x=1,
+                y=1.14,
+                xanchor="right",
+                yanchor="bottom",
                 buttons=[
                     dict(
                         label="▶ Play",
@@ -247,7 +249,7 @@ def fig_curve_animation(r: PipelineResult, max_frames: int = 160) -> go.Figure:
     return fig
 
 
-def fig_surface(r: PipelineResult, max_dates: int = 400) -> go.Figure:
+def fig_surface(r: PipelineResult, max_dates: int = 240) -> go.Figure:
     fit = r.fit
     step = max(1, len(fit.params) // max_dates)
     sub = fit.params.iloc[::step]
@@ -276,7 +278,8 @@ def fig_surface(r: PipelineResult, max_dates: int = 400) -> go.Figure:
             xaxis=dict(title="Maturity (y)", **axis),
             yaxis=dict(title="", **axis),
             zaxis=dict(title="Yield (%)", **axis),
-            camera=dict(eye=dict(x=1.7, y=-1.5, z=0.8)),
+            aspectratio=dict(x=1.0, y=1.7, z=0.7),
+            camera=dict(eye=dict(x=1.35, y=-1.45, z=0.75)),
         ),
         margin=dict(l=0, r=0, t=56, b=0),
     )
@@ -490,7 +493,8 @@ def fig_rich_cheap(r: PipelineResult) -> go.Figure:
     )
     for y in (2, -2):
         fig.add_hline(y=y, line=dict(color=MUTED, width=1))
-    fig.update_yaxes(title="z-score", zeroline=True)
+    lim = max(2.5, float(np.nanmax(np.abs(rc["zscore"].to_numpy(dtype=float)), initial=0)) + 0.5)
+    fig.update_yaxes(title="z-score", zeroline=True, range=[-lim, lim])
     return fig
 
 
@@ -503,7 +507,7 @@ def fig_forecast_skill(r: PipelineResult) -> go.Figure | None:
     fig = _fig(title="Out-of-sample RMSE relative to random walk (<1 = model better)", height=320)
     fig.add_heatmap(
         x=list(rel.columns),
-        y=[f"{h}m ahead" for h in rel.index],
+        y=[f"{h}-month" for h in rel.index],
         z=z,
         zmin=1 - dev,
         zmax=1 + dev,
@@ -511,8 +515,9 @@ def fig_forecast_skill(r: PipelineResult) -> go.Figure | None:
         text=np.vectorize(lambda v: f"{v:.2f}")(z),
         texttemplate="%{text}",
         colorbar=dict(title="ratio", thickness=12),
-        hovertemplate="%{y}, %{x}: %{z:.3f}<extra></extra>",
+        hovertemplate="%{y} horizon, %{x}: %{z:.3f}<extra></extra>",
     )
+    fig.update_yaxes(automargin=True, title="Horizon")
     return fig
 
 
@@ -560,7 +565,11 @@ def fig_pca(r: PipelineResult) -> go.Figure:
         )
     fig.update_xaxes(title="Maturity (y)")
     fig.update_layout(
-        template=_TEMPLATE, height=380, title="Factor validation: PCA vs Nelson-Siegel loadings"
+        template=_TEMPLATE,
+        height=420,
+        title="Factor validation: PCA vs Nelson-Siegel loadings",
+        legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="left", x=0),
+        margin=dict(t=90, b=100),
     )
     fig.update_annotations(font=dict(size=13, color=INK_2))
     return fig
@@ -629,6 +638,15 @@ _DARK_JS = """
         if (/^scene\\d*$/.test(k)) { ['xaxis','yaxis','zaxis'].forEach(a => {
           upd[k + '.' + a + '.backgroundcolor'] = bg; upd[k + '.' + a + '.gridcolor'] = grid; }); }
       });
+      (el.layout.annotations || []).forEach((a, i) => {
+        upd['annotations[' + i + '].font.color'] = a.showarrow ? title : ink; });
+      (el.layout.sliders || []).forEach((_, i) => {
+        upd['sliders[' + i + '].bgcolor'] = grid; upd['sliders[' + i + '].bordercolor'] = axis;
+        upd['sliders[' + i + '].tickcolor'] = axis; upd['sliders[' + i + '].font.color'] = ink;
+        upd['sliders[' + i + '].currentvalue.font.color'] = title; });
+      (el.layout.updatemenus || []).forEach((_, i) => {
+        upd['updatemenus[' + i + '].bgcolor'] = bg; upd['updatemenus[' + i + '].bordercolor'] = axis;
+        upd['updatemenus[' + i + '].font.color'] = ink; });
       Plotly.relayout(el, upd);
     });
   }
@@ -666,6 +684,7 @@ def build_dashboard(
             + fig.to_html(
                 full_html=False,
                 include_plotlyjs=js,
+                auto_play=False,
                 config={"displaylogo": False, "responsive": True},
             )
             + "</div>"

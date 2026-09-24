@@ -90,7 +90,8 @@ class CalibrationConfig:
     grid_size:
         Grid points per ``λ`` dimension for the global search.
     n_starts:
-        Number of distinct grid basins refined by the local optimiser.
+        Maximum number of grid-local minima (distinct basins) refined by the
+        local optimiser.
     ridge:
         Ridge penalty on the curvature betas, in (%)² per (%)² of beta.
     lambda_smoothing:
@@ -112,7 +113,7 @@ class CalibrationConfig:
     lambda2_bounds: tuple[float, float] = (0.06, 1.0)
     min_lambda_ratio: float = 1.5
     grid_size: int = 24
-    n_starts: int = 3
+    n_starts: int = 4
     ridge: float = 1e-5
     lambda_smoothing: float = 0.0
     fixed_lambda1: float | None = None
@@ -464,14 +465,15 @@ def _calibrate_zero(
 
     # ---- 1. global grid search over log-λ ------------------------------------
     axes = [np.linspace(bounds[i, 0], bounds[i, 1], cfg.grid_size) for i in free]
-    grid = np.stack([g.ravel() for g in np.meshgrid(*axes, indexing="ij")], axis=-1)
+    mesh = np.meshgrid(*axes, indexing="ij")
+    grid = np.stack([g.ravel() for g in mesh], axis=-1)
+    feasible_mask = np.ones(grid.shape[0], dtype=bool)
     if model == "nss" and len(free) == 2:
-        grid = grid[grid[:, 0] - grid[:, 1] >= log_ratio - 1e-12]
-    _, grid_loss = objective_batch(grid)
-    n_evals += grid.shape[0]
-
-    step = np.array([(bounds[i, 1] - bounds[i, 0]) / (cfg.grid_size - 1) for i in free])
-    starts = _distinct_minima(grid, grid_loss, min_separation=3.0 * step, k=cfg.n_starts)
+        feasible_mask = grid[:, 0] - grid[:, 1] >= log_ratio - 1e-12
+    grid_loss = np.full(grid.shape[0], np.inf)
+    _, grid_loss[feasible_mask] = objective_batch(grid[feasible_mask])
+    n_evals += int(feasible_mask.sum())
+    starts = _grid_local_minima(grid, grid_loss.reshape(mesh[0].shape), cfg.n_starts)
     if prev_log is not None:
         prev_theta = prev_log[free]
         feasible = model == "ns" or len(free) < 2 or prev_theta[0] - prev_theta[1] >= log_ratio
@@ -535,24 +537,27 @@ def _calibrate_zero(
     return _full_params(betas[0], lam, model), float(loss[0]), n_evals, ok, msg
 
 
-def _distinct_minima(
-    grid: FloatArray, loss: FloatArray, min_separation: FloatArray, k: int
-) -> list[FloatArray]:
-    """Up to ``k`` lowest grid points that are pairwise well separated.
+def _grid_local_minima(grid: FloatArray, loss: FloatArray, k: int) -> list[FloatArray]:
+    """The ``k`` lowest *local* minima of a loss evaluated on a regular grid.
 
-    Refining several *distinct* basins rather than only the single best grid
-    point guards against the NSS surface's competing local minima.
+    A point is a local minimum if no neighbour (including diagonals) is lower.
+    Refining every distinct basin - not just the globally lowest grid point -
+    matters because the NSS surface can hide the true optimum in a basin much
+    narrower than the grid spacing, next to broad basins of similar depth.
     """
-    chosen: list[FloatArray] = []
-    for idx in np.argsort(loss):
-        if not np.isfinite(loss[idx]):
-            break
-        cand = grid[idx]
-        if all(np.any(np.abs(cand - c) > min_separation) for c in chosen):
-            chosen.append(cand)
-            if len(chosen) == k:
-                break
-    return chosen
+    padded = np.pad(loss, 1, constant_values=np.inf)
+    is_min = np.isfinite(loss)
+    for offset in np.ndindex(*(3,) * loss.ndim):
+        if all(o == 1 for o in offset):
+            continue
+        window = tuple(slice(o, o + n) for o, n in zip(offset, loss.shape, strict=True))
+        is_min &= loss <= padded[window]
+    flat = loss.ravel()
+    idx = np.flatnonzero(is_min.ravel())
+    if idx.size == 0:  # pragma: no cover - a finite grid always has a minimum
+        idx = np.array([int(np.nanargmin(flat))])
+    idx = idx[np.argsort(flat[idx])][:k]
+    return [grid[i] for i in idx]
 
 
 def _feasible(
