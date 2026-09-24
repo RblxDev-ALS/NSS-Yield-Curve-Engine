@@ -343,9 +343,13 @@ def _truth_errors(r: PipelineResult) -> dict[str, float]:
 
 
 def write_outputs(
-    result: PipelineResult, out_dir: str | Path, dashboard: bool = True
+    result: PipelineResult, out_dir: str | Path, dashboard: bool = True, offline: bool = False
 ) -> dict[str, Path]:
-    """Write CSV / JSON / Markdown / HTML outputs. Returns the paths written."""
+    """Write CSV / JSON / Markdown / HTML outputs. Returns the paths written.
+
+    ``offline=True`` embeds plotly.js in the dashboard (about 4.5 MB) so it opens
+    without internet access; by default it is loaded from the Plotly CDN.
+    """
     from .report import render_markdown
 
     out = Path(out_dir)
@@ -382,5 +386,5 @@ def write_outputs(
         from .viz import build_dashboard
 
         paths["dashboard"] = out / "dashboard.html"
-        build_dashboard(result, paths["dashboard"])
+        build_dashboard(result, paths["dashboard"], include_plotlyjs=True if offline else "cdn")
     return paths
