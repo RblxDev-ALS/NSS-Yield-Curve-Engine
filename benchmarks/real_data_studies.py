@@ -145,6 +145,11 @@ def main() -> None:
             )
             rel = ev.relative_rmse
             rows[f"{kind.upper()}, {label}"] = {f"h={h}m": rel.loc[h].mean() for h in rel.index}
+            if window is None:
+                comb = ev.relative_rmse_combination
+                rows[f"½ {kind.upper()} + ½ random walk"] = {
+                    f"h={h}m": comb.loc[h].mean() for h in comb.index
+                }
     fc = pd.DataFrame(rows).T
     fc.index.name = "factor model"
     print(
@@ -170,6 +175,10 @@ def dns_study(core: pd.DataFrame, two_step: pd.DataFrame) -> None:
         )
         rel = ev.relative_rmse
         rows[f"state-space {label}"] = {f"h={h}m": rel.loc[h].mean() for h in rel.index}
+        comb = ev.relative_rmse_combination
+        rows[f"½ state-space {label} + ½ random walk"] = {
+            f"h={h}m": comb.loc[h].mean() for h in comb.index
+        }
         cover[f"state-space {label}"] = {f"h={h}m": ev.coverage.loc[h].mean() for h in rel.index}
     table = pd.concat([two_step, pd.DataFrame(rows).T])
     table.index.name = "model"

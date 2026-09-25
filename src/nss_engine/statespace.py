@@ -41,7 +41,7 @@ from scipy.optimize import minimize
 from scipy.stats import norm
 
 from .data import maturity_label
-from .forecasting import extract_factors, fit_factor_model
+from .forecasting import combination_errors, extract_factors, fit_factor_model
 from .models import DIEBOLD_LI_LAMBDA, FloatArray, ns_loadings
 
 _LOG_2PI = float(np.log(2.0 * np.pi))
@@ -401,10 +401,17 @@ class DNSForecastEvaluation:
     coverage: pd.DataFrame  #: share of outcomes inside the central interval
     interval: float
     n_forecasts: pd.Series
+    rmse_combination: pd.DataFrame | None = None  #: RMSE (bp) of ½ model + ½ random walk
 
     @property
     def relative_rmse(self) -> pd.DataFrame:
         return self.rmse_model / self.rmse_random_walk
+
+    @property
+    def relative_rmse_combination(self) -> pd.DataFrame:
+        if self.rmse_combination is None:
+            raise ValueError("no combination forecasts were evaluated")
+        return self.rmse_combination / self.rmse_random_walk
 
 
 def evaluate_dns_forecasts(
@@ -481,4 +488,7 @@ def evaluate_dns_forecasts(
         coverage=agg(inside, "mean"),
         interval=interval,
         n_forecasts=pd.Series({h: len(err_m[h]) for h in horizons}, name="n_forecasts"),
+        rmse_combination=agg(
+            {h: combination_errors(err_m[h], err_rw[h]) for h in horizons}, "rmse"
+        ),
     )
