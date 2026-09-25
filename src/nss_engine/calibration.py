@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import numpy as np
@@ -62,6 +62,7 @@ from .models import (
     PARAM_NAMES,
     FloatArray,
     NSSCurve,
+    coupon_schedule,
     curvature_loading,
     nss_loadings,
     slope_loading,
@@ -351,13 +352,14 @@ class _ParOperator:
         self.is_bill = maturities <= 1.0
         times: list[float] = []
         rows: list[int] = []
+        #: accrued fraction of the current coupon, subtracted from the annuity
+        self.accrued = np.zeros(maturities.size)
         for i, t in enumerate(maturities):
             if self.is_bill[i]:
                 continue
-            n = int(np.floor(t * freq + 1e-9))
-            sched = t - np.arange(n) / freq
+            sched, self.accrued[i] = coupon_schedule(float(t), freq)
             times.extend(sched)
-            rows.extend([i] * n)
+            rows.extend([i] * sched.size)
         # Coupon dates of different bonds coincide (all on the half-year grid for
         # CMT tenors), so evaluate the curve once per *distinct* date.
         rounded = np.round(np.array(times, dtype=float), 10)
@@ -394,7 +396,7 @@ class _ParOperator:
         growth = np.exp(z_mat[bills] / (100.0 * f))
         out[bills] = 100.0 * f * (growth - 1.0)
         cb = ~bills
-        annuity = self.annuity_matrix @ d_cf
+        annuity = self.annuity_matrix @ d_cf - self.accrued / f
         out[cb] = 100.0 * (1.0 - d_mat[cb]) / annuity[cb]
         jac = np.zeros((n, 6))
         if not jacobian:
@@ -954,6 +956,10 @@ def _calibrate_par_multistart(
         n_evals += final[2]
         if np.isfinite(final[1]) and final[1] <= best[1]:
             best = final
+        else:
+            # A converged polish from the screened winner found nothing better,
+            # which confirms it; report the polish's convergence status.
+            best = (best[0], best[1], best[2], final[3], final[4])
     return best[0], best[1], n_evals, best[3], best[4]
 
 
@@ -1082,18 +1088,20 @@ def _calibrate_par(
     x_best = res.x if np.isfinite(res.cost) and 2 * res.cost <= loss0 else x0
     betas, log_lam = unpack(x_best)
     lam = np.exp(log_lam)
-    if ratio_param and not (cfg.lambda1_bounds[0] - 1e-9 <= lam[0] <= cfg.lambda1_bounds[1] + 1e-9):
-        # The reparametrised box does not bound λ1 itself; fall back to the
-        # (always feasible) zero-curve starting point in that rare case.
-        betas, log_lam = unpack(x0)
-        lam = np.exp(log_lam)
-        return (
-            _full_params(betas, lam, model),
-            loss0,
-            int(res.nfev),
-            False,
-            "lambda1 left its bounds",
+    lo1, hi1 = cfg.lambda1_bounds
+    if ratio_param and not (lo1 - 1e-9 <= lam[0] <= hi1 + 1e-9):
+        # The reparametrised box bounds λ2 and λ1/λ2 but not λ1 itself. The
+        # optimum wants λ1 beyond its bound, so that bound is active: fix λ1
+        # there and re-solve for β and λ2 (with λ2 ≤ λ1 / ratio as a box bound).
+        lam1 = float(np.clip(lam[0], lo1, hi1))
+        hi2 = min(cfg.lambda2_bounds[1], lam1 / cfg.min_lambda_ratio)
+        lo2 = min(cfg.lambda2_bounds[0], hi2 * (1 - 1e-9))
+        sub = replace(cfg, fixed_lambda1=lam1, lambda2_bounds=(lo2, hi2))
+        start_sub = _full_params(betas, np.array([lam1, min(max(lam[1], lo2), hi2)]), model)
+        params_b, loss_b, nfev_b, ok_b, msg_b = _calibrate_par(
+            tau, y, w, sub, model, start_sub, previous, max_nfev
         )
+        return params_b, loss_b, int(res.nfev) + nfev_b, ok_b, f"lambda1 at its bound; {msg_b}"
     return (
         _full_params(betas, lam, model),
         float(np.sum(residuals(x_best) ** 2)),
@@ -1210,6 +1218,7 @@ def calibrate_panel(
                 "n_points": res.maturities.size,
                 "model": res.model,
                 "success": res.success,
+                "message": res.message,
                 "runtime_ms": res.runtime_ms,
                 "sigma_bp": res.sigma_bp,
                 "n_outliers": int(res.outliers.sum()),

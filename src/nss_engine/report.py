@@ -100,6 +100,18 @@ def render_markdown(r: PipelineResult) -> str:
         f"* Median calibration time {fq['runtime_ms_median']:.1f} ms per curve; "
         f"optimiser success rate {fq['success_rate']:.1%}"
     )
+    bounds = fq.get("share_lambda_at_bound") or {}
+    at_bound = {k: v for k, v in bounds.items() if v and v > 0.01}
+    if at_bound:
+        add(
+            "* Decay rates at a bound: "
+            + ", ".join(f"{k.replace('_', ' ')} {v:.1%}" for k, v in at_bound.items())
+        )
+    if fq.get("not_converged_reasons"):
+        add(
+            "* Optimiser status on non-converged dates: "
+            + "; ".join(f"{msg} ({n})" for msg, n in fq["not_converged_reasons"].items())
+        )
     if fq.get("share_ns_fallback"):
         add(
             f"* {fq['share_ns_fallback']:.1%} of dates had too few tenors for NSS and used Nelson-Siegel"
@@ -261,6 +273,28 @@ def render_markdown(r: PipelineResult) -> str:
         add("")
         add(_table(fe.dm_pvalue, ".3f"))
         add("")
+
+    if r.dns is not None:
+        d = r.dns
+        add("## State-space dynamic Nelson-Siegel (Kalman filter)")
+        add("")
+        add(
+            f"Maximum-likelihood fit on {len(d.factors)} months (Diebold, Rudebusch & Aruoba, "
+            f"2006): λ = {d.params.lam:.3f} (curvature peak at {1.7933 / d.params.lam:.1f}y), "
+            f"level persistence {d.params.A[0, 0]:.3f}/month, slope {d.params.A[1, 1]:.3f}, "
+            f"curvature {d.params.A[2, 2]:.3f}. Measurement noise by tenor (bp): "
+            + ", ".join(
+                f"{maturity_label(float(m))} {h * 100:.0f}"
+                for m, h in zip(d.maturities, d.params.h, strict=True)
+            )
+            + "."
+        )
+        add("")
+        if r.dns_forecast is not None:
+            add("12-month-ahead forecast with 80% interval:")
+            add("")
+            add(_table(r.dns_forecast, ".2f"))
+            add("")
 
     add("## Relative value (latest)")
     add("")

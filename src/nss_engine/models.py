@@ -100,6 +100,20 @@ def _find_curvature_peak_x() -> float:
 _CURVATURE_PEAK_X = _find_curvature_peak_x()
 
 
+def coupon_schedule(maturity: float, freq: int = 2) -> tuple[FloatArray, float]:
+    """Remaining coupon dates of a bullet bond and the accrued fraction of the current period.
+
+    Coupons fall every ``1/freq`` years counting back from ``maturity``; the
+    first remaining one is at ``t1 = maturity − (n − 1)/freq`` with
+    ``0 < t1 ≤ 1/freq``, so ``1 − freq·t1`` of the current coupon has already
+    accrued (zero when the maturity is a whole number of periods).
+    """
+    n = max(int(np.ceil(maturity * freq - 1e-9)), 1)
+    times = maturity - np.arange(n)[::-1] / freq
+    accrued = float(np.clip(1.0 - freq * times[0], 0.0, 1.0))
+    return times, accrued
+
+
 def nss_zero(
     tau: ArrayLike,
     beta0: float,
@@ -208,9 +222,11 @@ class NSSCurve:
         Maturities of one year or less are treated as zero-coupon bills, quoted
         as a bond-equivalent yield ``freq·(D^{-1/(freq·τ)} - 1)``. Longer
         maturities are coupon bonds paying ``c/freq`` on the schedule
-        ``τ, τ - 1/freq, ...`` (> 0), whose price equals par when
-        ``c = freq · (1 - D(τ)) / Σ D(t_i)``. This mirrors how the Treasury
-        constant-maturity (CMT) series are quoted.
+        ``τ, τ - 1/freq, ...`` (> 0), whose *clean* price equals par when
+        ``c = freq · (1 - D(τ)) / (Σ D(t_i) - a)``, where ``a`` is the accrued
+        fraction of the current coupon period (see :func:`coupon_schedule`;
+        ``a = 0`` for whole half-years, like every CMT tenor). This mirrors how
+        the Treasury constant-maturity (CMT) series are quoted.
         """
         tau_arr = np.atleast_1d(np.asarray(tau, dtype=float))
         out = np.empty_like(tau_arr)
@@ -221,9 +237,8 @@ class NSSCurve:
                 d = self.discount(t)[0]
                 out[i] = 100.0 * freq * (d ** (-1.0 / (freq * t)) - 1.0)
             else:
-                n = int(np.floor(t * freq + 1e-9))
-                times = t - np.arange(n) / freq
-                annuity = self.discount(times).sum() / freq
+                times, accrued = coupon_schedule(float(t), freq)
+                annuity = (self.discount(times).sum() - accrued) / freq
                 out[i] = 100.0 * (1.0 - self.discount(t)[0]) / annuity
         return out
 

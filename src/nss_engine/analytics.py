@@ -19,7 +19,7 @@ import pandas as pd
 from numpy.typing import ArrayLike
 
 from .data import maturity_label
-from .models import FloatArray, NSSCurve, nss_loadings
+from .models import FloatArray, NSSCurve, coupon_schedule, nss_loadings
 
 # =============================================================================
 # Factor validation: PCA and empirical proxies
@@ -122,7 +122,9 @@ def _column(df: pd.DataFrame, tau: float) -> pd.Series:
 
 @dataclass(frozen=True)
 class Bond:
-    """A fixed-coupon bullet bond priced on its next coupon date (no accrued).
+    """A fixed-coupon bullet bond. :func:`price` returns the full (dirty) price;
+    for maturities that are not a whole number of coupon periods the first
+    coupon is a full coupon paid within one period (see :func:`coupon_schedule`).
 
     ``coupon`` is the annual coupon rate in percent; ``coupon = 0`` gives a
     zero-coupon bond.
@@ -137,8 +139,8 @@ class Bond:
         """``(times, amounts)`` of all remaining cash flows."""
         if self.coupon == 0:
             return np.array([self.maturity]), np.array([self.face])
-        n = max(int(np.floor(self.maturity * self.freq + 1e-9)), 1)
-        times = np.sort(self.maturity - np.arange(n) / self.freq)
+        times, _ = coupon_schedule(self.maturity, self.freq)
+        n = times.size
         amounts = np.full(n, self.face * self.coupon / 100.0 / self.freq)
         amounts[-1] += self.face
         return times, amounts

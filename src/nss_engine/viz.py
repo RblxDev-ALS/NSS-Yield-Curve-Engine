@@ -100,7 +100,14 @@ def fig_curve_snapshot(r: PipelineResult) -> go.Figure:
     curve = fit.curve(-1)
     grid = np.linspace(1 / 12, 30, 240)
     measure = "par" if r.config.calibration.target == "par" else "zero"
-    fig = _fig(title=f"Treasury curve on {date:%d %b %Y}", height=430, hovermode="x unified")
+    fig = _fig(
+        title=f"Treasury curve on {date:%d %b %Y}",
+        height=500,
+        hovermode="x unified",
+        # many series: put the legend under the plot so it cannot run into the title
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
+        margin=dict(l=56, r=24, t=56, b=120),
+    )
     fig.update_xaxes(title="Maturity (years)")
     fig.update_yaxes(title="Yield (%)")
     ago = fit.params.index[fit.params.index <= date - pd.DateOffset(years=1)]
@@ -120,6 +127,19 @@ def fig_curve_snapshot(r: PipelineResult) -> go.Figure:
         line=dict(color=SERIES[1], width=2),
         hovertemplate="%{y:.2f}%",
     )
+    lf = r.latest_fit
+    if lf is not None and lf.success:
+        lo, hi = lf.confidence_band(grid, measure)
+        if np.all(np.isfinite(lo)):
+            fig.add_scatter(
+                x=np.concatenate([grid, grid[::-1]]),
+                y=np.concatenate([hi, lo[::-1]]),
+                fill="toself",
+                fillcolor="rgba(42,120,214,0.14)",
+                line=dict(width=0),
+                name="95% confidence band",
+                hoverinfo="skip",
+            )
     fig.add_scatter(
         x=grid,
         y=curve.evaluate(grid, measure),
@@ -127,6 +147,17 @@ def fig_curve_snapshot(r: PipelineResult) -> go.Figure:
         line=dict(color=SERIES[0], width=2.5),
         hovertemplate="%{y:.2f}%",
     )
+    if lf is not None and lf.outliers.any():
+        fig.add_scatter(
+            x=lf.maturities[lf.outliers],
+            y=lf.observed[lf.outliers],
+            mode="markers",
+            name="Rejected by robust fit",
+            marker=dict(
+                color=SERIES[7], size=14, symbol="x-thin", line=dict(width=3, color=SERIES[7])
+            ),
+            hovertemplate="%{y:.2f}%",
+        )
     obs = r.yields.loc[:date].iloc[-1].dropna()
     fig.add_scatter(
         x=obs.index.astype(float),
@@ -429,6 +460,98 @@ def fig_recession_probability(r: PipelineResult) -> go.Figure | None:
         ax=0,
         ay=-30,
         font=dict(color=INK, size=13),
+    )
+    return fig
+
+
+def fig_forward_spread(r: PipelineResult) -> go.Figure:
+    """Near-term forward spread (Engstrom & Sharpe) against the 10y−3m slope."""
+    sp = r.spreads
+    fig = _fig(
+        title="Near-term forward spread vs the long-term slope",
+        height=400,
+        hovermode="x unified",
+    )
+    fig.add_scatter(
+        x=sp.index,
+        y=sp["slope"],
+        name="10y − 3m",
+        line=dict(color=SERIES[0], width=1.8),
+        hovertemplate="%{y:+.2f} pp",
+    )
+    fig.add_scatter(
+        x=sp.index,
+        y=sp["near_term_fwd"],
+        name="Forward 3m in 18m − 3m",
+        line=dict(color=SERIES[1], width=1.8),
+        hovertemplate="%{y:+.2f} pp",
+    )
+    fig.add_hline(y=0, line=dict(color=AXIS, width=1))
+    _add_recessions(fig, r.recession, sp.index[0])
+    fig.update_yaxes(title="percentage points")
+    return fig
+
+
+def fig_reference_gap(r: PipelineResult) -> go.Figure | None:
+    """Engine zero curve minus the reference (Fed GSW or true) curve through time."""
+    if r.reference is None:
+        return None
+    d = r.reference.difference_bp
+    cols = [c for c in ("2Y", "10Y", "30Y") if c in d.columns]
+    fig = _fig(
+        title=f"Engine zero curve minus {r.reference_name}", height=380, hovermode="x unified"
+    )
+    for i, c in enumerate(cols):
+        fig.add_scatter(
+            x=d.index,
+            y=d[c].rolling(4, min_periods=1).mean(),
+            name=c,
+            line=dict(color=SERIES[i], width=1.6),
+            hovertemplate="%{y:+.1f} bp",
+        )
+    fig.add_hline(y=0, line=dict(color=AXIS, width=1))
+    fig.update_yaxes(title="bp (4-period average)")
+    return fig
+
+
+def fig_dns_forecast(r: PipelineResult) -> go.Figure | None:
+    """State-space DNS forecast across maturities with its 80% interval."""
+    if r.dns_forecast is None:
+        return None
+    fc = r.dns_forecast
+    x = r.dns.maturities if r.dns is not None else np.arange(len(fc))
+    h = max(r.config.forecast_horizons)
+    fig = _fig(
+        title=f"State-space forecast of the curve, {h} months ahead",
+        height=400,
+        hovermode="x unified",
+    )
+    fig.update_xaxes(title="Maturity (years)")
+    fig.update_yaxes(title="Yield (%)")
+    fig.add_scatter(
+        x=np.concatenate([x, x[::-1]]),
+        y=np.concatenate([fc["upper_80_pct"], fc["lower_80_pct"][::-1]]),
+        fill="toself",
+        fillcolor="rgba(27,175,122,0.16)",
+        line=dict(width=0),
+        name="80% interval",
+        hoverinfo="skip",
+    )
+    fig.add_scatter(
+        x=x,
+        y=fc["forecast_pct"],
+        name="Forecast",
+        mode="lines+markers",
+        line=dict(color=SERIES[2], width=2.5),
+        hovertemplate="%{y:.2f}%",
+    )
+    fig.add_scatter(
+        x=x,
+        y=fc["latest_pct"],
+        name="Latest month (average)",
+        mode="lines+markers",
+        line=dict(color=MUTED, width=2, dash="dot"),
+        hovertemplate="%{y:.2f}%",
     )
     return fig
 
@@ -768,6 +891,35 @@ def build_dashboard(
             + "</details>"
         )
 
+    # The first embedded figure carries plotly.js, so render the page's first
+    # figure before any section that is assembled ahead of the body.
+    snapshot_html = embed(fig_curve_snapshot(r))
+
+    rec_cmp_html = ""
+    if r.recession_comparison is not None:
+        cmp = r.recession_comparison[
+            ["auc_in_sample", "auc_out_of_sample", "brier_out_of_sample", "latest_probability"]
+        ]
+        rec_cmp_html = (
+            "<details><summary>Which signal predicts recessions best (pseudo-real time)?</summary>"
+            + _table_html(cmp, "{:.3f}")
+            + "</details>"
+        )
+
+    ref_section = ""
+    if r.reference is not None:
+        ov = s["reference_curve"]
+        ref_section = (
+            f"<section><h2>Validation against {html.escape(r.reference_name or '')}</h2>"
+            f"<p>Zero curves agree to {ov['rmse_bp']:.1f} bp RMSE over {int(ov['n_dates'])} dates; "
+            f"period-to-period changes correlate {ov['mean_change_corr']:.3f}. The Fed fits off-the-run "
+            "notes and bonds, this engine on-the-run par yields, so small persistent gaps are expected."
+            f"</p>{embed(fig_reference_gap(r))}"
+            "<details><summary>Table view</summary>"
+            + _table_html(r.reference.summary().T, "{:.2f}")
+            + "</details></section>"
+        )
+
     body = f"""
 <header>
   <h1>NSS Yield Curve Engine</h1>
@@ -781,7 +933,7 @@ def build_dashboard(
 <section><h2>Today's curve</h2>
 <p>Dots are observed constant-maturity yields; the line is the calibrated NSS curve. The forward curve shows
 the rates the market implies for future short-term borrowing.</p>
-{embed(fig_curve_snapshot(r))}
+{snapshot_html}
 <details><summary>Table view</summary>{_table_html(today)}</details>
 </section>
 
@@ -798,6 +950,10 @@ flip the label.</p>
 {embed(fig_slope_regime(r))}
 {lead_html}
 {embed(fig_recession_probability(r))}
+<p>The near-term forward spread (Engstrom &amp; Sharpe, 2019) reads the market's expected path of the
+Fed funds rate off the NSS forward curve: below zero, cuts are priced in.</p>
+{embed(fig_forward_spread(r))}
+{rec_cmp_html}
 </section>
 
 <section><h2>Latent factors</h2>
@@ -806,6 +962,8 @@ flip the label.</p>
 {embed(fig_pca(r))}
 <details><summary>Correlation with model-free proxies</summary>{_table_html(r.proxy_correlations, "{:.3f}")}</details>
 </section>
+
+{ref_section}
 
 <section><h2>Model quality and relative value</h2>
 <p>Residuals are where individual tenors sit relative to the smooth curve. Positive (red) means the yield
@@ -821,6 +979,9 @@ is above the curve - the bond is cheap relative to its neighbours.</p>
 the random-walk ("no change") benchmark.</p>
 {embed(fig_forecast_skill(r))}
 {fc_html}
+<p>The state-space version of the model (Kalman filter, all parameters estimated jointly by maximum
+likelihood) also gives forecast <em>intervals</em>.</p>
+{embed(fig_dns_forecast(r))}
 </section>
 
 <footer>Generated by <a href="https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine">nss-engine</a>.
