@@ -55,7 +55,7 @@ def simulate_market(
     noise_bp: float = 3.0,
     maturities: np.ndarray | None = None,
     missing_short_end_until: str | None = "2001-07-31",
-    quote: str = "zero",
+    quote: str = "par",
 ) -> SyntheticMarket:
     """Simulate a weekly Treasury panel from a dynamic NSS model.
 
@@ -73,7 +73,8 @@ def simulate_market(
         Blank out the 1-month tenor before this date, mimicking FRED history
         (exercises the calibrator's missing-data handling). ``None`` disables.
     quote:
-        ``"zero"`` quotes zero rates, ``"par"`` quotes par yields.
+        ``"par"`` (default) quotes semi-annual par yields, like the FRED CMT
+        series; ``"zero"`` quotes continuously compounded zero rates.
     """
     rng = np.random.default_rng(seed)
     mats = np.asarray(

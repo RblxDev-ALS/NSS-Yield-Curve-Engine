@@ -38,8 +38,9 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--target",
         choices=["yield", "par"],
-        default="yield",
-        help="fit zero curve to quoted yields directly, or treat quotes as par yields",
+        default="par",
+        help="treat quotes as par yields (default; correct for FRED CMT data) or fit the "
+        "zero curve to them directly",
     )
     p.add_argument("--ridge", type=float, default=CalibrationConfig.ridge)
     p.add_argument(
