@@ -40,7 +40,7 @@ jobs:
         run: |
           cat site/report.md >> "$GITHUB_STEP_SUMMARY"
           cat site/report.md
-      - name: Model-selection studies (cross-validation, forecast design)
+      - name: Real-data studies (cross-validation, forecasts, Fed curve, state-space)
         run: |
           pip install tabulate
           python benchmarks/real_data_studies.py --source fred | tee site/studies.md

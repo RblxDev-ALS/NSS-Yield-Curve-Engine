@@ -23,13 +23,20 @@ else:
 date, quotes = yields.index[-1], yields.iloc[-1]
 fit = calibrate(np.asarray(quotes.index, dtype=float), quotes.to_numpy(), CalibrationConfig())
 curve = fit.curve
-print(f"{date:%Y-%m-%d}: RMSE {fit.rmse_bp:.2f} bp")
+print(f"{date:%Y-%m-%d}: RMSE {fit.rmse_bp:.2f} bp (quotes fitted as par yields)")
 print(f"  level β0 = {curve.beta0:.2f}%, short rate = {curve.short_rate:.2f}%")
 print(f"  10y-2y = {curve.spread(10, 2):+.2f} pp, 10y-3m = {curve.spread(10, 0.25):+.2f} pp")
 
-print("\nForward rates:")
-for t in (1, 2, 5, 10, 20):
-    print(f"  {maturity_label(t):>4}: {curve.forward(t)[0]:.2f}%")
+print("\nZero and forward rates with 95% confidence bands:")
+grid = [1, 2, 5, 10, 20]
+z_lo, z_hi = fit.confidence_band(grid)
+f_lo, f_hi = fit.confidence_band(grid, measure="forward")
+for t, zl, zh, fl, fh in zip(grid, z_lo, z_hi, f_lo, f_hi, strict=True):
+    print(
+        f"  {maturity_label(t):>4}: zero {curve.zero(t)[0]:.2f}% ±{(zh - zl) / 2 * 100:.1f} bp, "
+        f"forward {curve.forward(t)[0]:.2f}% ±{(fh - fl) / 2 * 100:.1f} bp"
+    )
+print(f"  estimated quote noise σ̂ = {fit.sigma_bp:.1f} bp")
 
 print("\nCarry & roll-down over 3 months:")
 print(carry_rolldown(curve, [2, 5, 10, 30], horizon=0.25).round(1).to_string())

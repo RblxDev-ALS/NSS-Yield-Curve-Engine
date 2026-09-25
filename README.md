@@ -3,8 +3,8 @@
 [![CI](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml)
 [![Live dashboard](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml)
 ![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
-![Tests](https://img.shields.io/badge/tests-117%20passing-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-162%20passing-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
 
 A Python engine that fits the **Nelson–Siegel–Svensson (NSS)** model to the U.S.
 Treasury yield curve every week since 1990. It then uses the fitted curves to
@@ -81,14 +81,14 @@ To reproduce: `nss-engine run --source fred --start 1990-01-01` and
 | | |
 |---|---|
 | **Data** | Downloads the 11 constant-maturity Treasury series (1M–30Y) and NBER recession dates from FRED. No API key is needed. Downloads are cached, retried, and fall back to the cache if FRED is down. |
-| **Calibration** | A variable-projection least-squares fit with a global search over the decay parameters (details below). It handles missing tenors, and can fit either zero rates or par yields. |
+| **Calibration** | Fits **par yields**, which is how FRED quotes Treasuries. It uses a variable-projection global search over the decay parameters with multi-start par refinement and an analytic Jacobian (details below). It handles missing tenors, gives confidence bands on the fitted curve, and can optionally down-weight bad quotes (`--robust`). |
 | **Curves** | Zero, instantaneous forward, discount and par curves in closed form. |
 | **Macro regimes** | The model-implied 10Y−3M slope is classified as Inverted / Flat / Normal / Steep, with hysteresis. It also labels bull/bear steepeners and flatteners, and measures inversion-to-recession lead times. |
-| **Recession model** | A probit on the slope, $P(\text{recession in 12m}) = \Phi(a + b\cdot\text{spread})$ (the NY Fed specification), fitted on NBER data. |
-| **Forecasting** | The Diebold–Li dynamic Nelson–Siegel model, evaluated **out of sample** against a random walk with Diebold–Mariano tests. |
+| **Recession model** | A probit on the slope, $P(\text{recession in 12m}) = \Phi(a + b\cdot\text{spread})$ (the NY Fed specification), fitted on NBER data. It is compared with the **near-term forward spread** (Engstrom & Sharpe, 2019) in a **pseudo-real-time** test that only uses recessions known at each date. |
+| **Forecasting** | The Diebold–Li dynamic Nelson–Siegel model, and its **state-space version** (Kalman filter, maximum likelihood, Diebold–Rudebusch–Aruoba 2006), which also gives forecast intervals. Both are evaluated **out of sample** against a random walk. |
 | **Risk** | Bond pricing off the curve, plus DV01, duration, convexity, key-rate durations and **factor durations** (exposure to level/slope/curvature). |
 | **Relative value** | Rich/cheap residuals, rolling z-scores with no look-ahead, mean-reversion half-lives, and carry and roll-down. |
-| **Validation** | PCA of yield changes compared with the NSS loadings, and correlations with model-free factor proxies. |
+| **Validation** | Every run is compared with the **Federal Reserve's own Svensson curve** (Gürkaynak–Sack–Wright). There is also PCA of yield changes against the NSS loadings, and correlations with model-free factor proxies. |
 | **Outputs** | An interactive dashboard (light/dark), a Markdown report, CSV/JSON exports and a CLI. A scheduled GitHub Action rebuilds it all from live data. |
 
 ## Quick start
@@ -105,9 +105,11 @@ nss-engine run --source synthetic   # offline demo on a simulated market
 
 `nss-engine run` writes `output/dashboard.html` (open it in a browser), plus
 `report.md`, `summary.json`, `nss_parameters.csv`, `fitted_yields.csv`,
-`residuals_bp.csv` and `macro_signals.csv`. Useful flags: `--target par`,
-`--model ns`, `--start 2000-01-01`, `--freq ME` (monthly), `--no-forecast`, `--offline`
-(embed plotly.js so the dashboard opens without internet).
+`residuals_bp.csv`, `macro_signals.csv` and `reference_comparison.csv`. Useful
+flags: `--robust` (down-weight bad quotes), `--target yield` (the 1.x behaviour:
+fit zero rates directly to the quotes), `--model ns`, `--start 2000-01-01`,
+`--freq ME` (monthly), `--no-forecast`, `--no-reference` (skip the Fed
+comparison), `--offline` (embed plotly.js so the dashboard opens without internet).
 
 As a library:
 
@@ -121,9 +123,19 @@ fit = calibrate_panel(yields)                               # one NSS curve per 
 curve = fit.curve(-1)                                       # latest curve
 curve.zero([2, 10]), curve.forward(5), curve.par_yield(30)  # evaluate it anywhere
 fit.spread(10, 0.25)                                        # model-implied 10y-3m history
+
+one = calibrate(yields.columns, yields.iloc[-1])            # a single date, full diagnostics
+one.confidence_band([2, 10, 30])                            # 95% band on the zero curve
+one.standard_errors(), one.leverage, one.sigma_bp
+
+from nss_engine import compare_to_reference, fit_dns
+from nss_engine.data import load_gsw_parameters
+compare_to_reference(fit, load_gsw_parameters()).summary()  # vs the Fed's curve, by maturity
+dns = fit_dns(yields.resample("ME").mean())                 # Kalman-filter DNS model
+mean, cov = dns.forecast(12)                                # 12-month predictive distribution
 ```
 
-See [`examples/quickstart.py`](examples/quickstart.py) for risk and carry analytics.
+See [`examples/quickstart.py`](examples/quickstart.py) for risk, carry and uncertainty analytics.
 
 ## How the calibration works
 
@@ -154,6 +166,12 @@ fixed decay rates the model is linear in the betas**. So:
    keep the two humps apart and inside the 1M–30Y range. The ridge and
    week-to-week $\Delta\log\lambda$ penalties were tuned against the *true* curve
    on synthetic data, not against in-sample fit.
+5. **Par yields.** The quotes are par yields, not zero rates. The par objective is
+   not separable, so the grid search above runs on *convexity-adjusted* quotes.
+   Every basin it finds is then refined in par space with an analytic Jacobian,
+   including the stub coupon and accrued interest for off-grid maturities.
+   Refining only one start landed in a worse basin on 7% of dates. The
+   multi-start matches a brute-force search.
 
 The full derivations (forward rates, par yields, the gradient, the probit,
 Diebold–Mariano, factor durations) are in
@@ -166,7 +184,7 @@ Treasury market** with known true parameters. It follows a dynamic NSS model wit
 a zero lower bound and realistic inversions. The tests and benchmarks can then
 check correctness, not just that the code runs.
 
-* **117 tests, 95% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
+* **162 tests, 96% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
 * **Math identities**: the forward curve integrates back to the zero curve, par
   bonds price at exactly 100, key-rate durations sum to duration, and the level
   factor duration equals duration.
@@ -179,28 +197,40 @@ check correctness, not just that the code runs.
 * **Statistics**: the probit matches an independent SciPy MLE, the VAR recovers
   known coefficients, the Diebold–Mariano test detects a known accuracy gap, and
   the rolling z-scores are checked for look-ahead.
+* **Jacobians** (par operator and full residual vector, for NSS, NS, fixed λ and
+  smoothing) agree with finite differences to 1e-8.
+* **Confidence bands** reach 93–97% coverage for a nominal 95% in a Monte Carlo test.
+* **Kalman filter**: the fast steady-state filter matches a textbook
+  covariance-form filter to 1e-9, with missing tenors and blank dates. The MLE
+  recovers known parameters.
+* **No look-ahead in the recession evaluation**: scrambling every outcome that
+  was not yet known at a forecast date leaves that forecast unchanged.
 
-## Benchmark: v1 vs. the original algorithm
+## Benchmark: 2.0 vs. 1.x vs. the original algorithm
 
 `benchmarks/compare_legacy.py` reruns the original (v0) calibration routine
-unchanged and compares it with v1. The test uses a synthetic market where the
-**true** curves are known: 3 seeds × 10 years of weekly curves, with 3 bp of
-quote noise.
+unchanged and compares it with 1.x and 2.0. The test uses a synthetic market
+where the **true** curves are known and the quotes are par yields, like FRED's:
+3 seeds × 10 years of weekly curves, with 3 bp of quote noise.
 
-| method | fit RMSE | error vs **true** curve | worst 1% error vs truth | ms / curve |
-|---|---:|---:|---:|---:|
-| v0: 6-D L-BFGS-B + ridge 0.005 (original) | 5.98 bp | 5.07 bp | 10.6 bp | 14.0 |
-| v0 without the ridge penalty | 2.71 bp | 2.65 bp | 6.9 bp | 15.2 |
-| v1: variable projection, each week independent | 1.96 bp | 2.09 bp | 4.9 bp | 12.7 |
-| **v1: variable projection + λ smoothing (default)** | 2.12 bp | **1.91 bp** | **4.3 bp** | **10.4** |
+| method | fit RMSE | error vs **true** curve | worst 1% error vs truth |
+|---|---:|---:|---:|
+| v0: 6-D L-BFGS-B + ridge 0.005 (original) | 5.57 bp | 8.01 bp | 15.0 bp |
+| v0 without the ridge penalty | 2.56 bp | 6.17 bp | 12.7 bp |
+| 1.x: variable projection + λ smoothing, zero target | 2.15 bp | 5.74 bp | 12.4 bp |
+| 2.0: par target, each week independent | 1.98 bp | 2.58 bp | 5.8 bp |
+| **2.0: par target + λ smoothing (default)** | 2.15 bp | **2.37 bp** | **5.3 bp** |
 
-* **v1's curves are 62% closer to the truth** than v0's, and its worst cases are 60% better.
+* **2.0's curves are 59% closer to the truth than 1.x's, and 70% closer than
+  v0's**, with worst cases more than halved. The in-sample fit is the same as
+  1.x (2.15 bp). What changed is that par quotes are no longer read as zero
+  rates, a bias the in-sample fit cannot reveal.
 * v0's penalty was larger than the fitting error itself, so it flattened genuine
   curvature. Removing it is not enough on its own: the local optimizer then
-  lands in worse basins (2.71 vs 1.96 bp on identical data).
+  lands in worse basins.
 * The smoothing penalty *raises* in-sample RMSE slightly but *lowers* the error
-  against the truth. The extra in-sample fit was fitting noise, and week-to-week
-  λ jumps shrink roughly 4×.
+  against the truth. The extra in-sample fit was fitting noise.
+* A 2.0 par fit takes about 20 ms per weekly curve (1.x's zero fit took 10 ms).
 
 ## Architecture
 
@@ -213,7 +243,10 @@ flowchart LR
     cal --> regime[regime.py<br/>regimes · probit · lead times]
     cal --> ana[analytics.py<br/>PCA · risk · carry · RV]
     data --> fc[forecasting.py<br/>Diebold–Li · DM tests]
-    regime & ana & fc --> pipe[pipeline.py]
+    data --> ss[statespace.py<br/>Kalman filter · MLE]
+    FED[(Federal Reserve<br/>GSW curve)] --> val[validation.py]
+    cal --> val
+    regime & ana & fc & ss & val --> pipe[pipeline.py]
     pipe --> out[dashboard.html · report.md<br/>CSV · JSON]
 ```
 
@@ -226,10 +259,12 @@ src/nss_engine/
   analytics.py     PCA, bond risk, factor durations, carry, rich/cheap
   regime.py        regimes, curve dynamics, inversions, probit recession model
   forecasting.py   Diebold-Li model, out-of-sample evaluation, Diebold-Mariano
+  statespace.py    state-space DNS: Kalman filter, MLE, predictive intervals
+  validation.py    comparison with a reference curve (the Fed's GSW curve)
   pipeline.py      end-to-end run and exports
   report.py, viz.py, cli.py
-tests/             117 tests (incl. a real market curve)
-benchmarks/        v0-vs-v1 comparison, regularization tuning
+tests/             162 tests (incl. a real market curve)
+benchmarks/        v0 / 1.x / 2.0 comparison, regularization tuning, real-data studies
 docs/              methodology and references
 ```
 
@@ -240,22 +275,29 @@ docs/              methodology and references
   directly tradeable mispricings.
 * NSS is a statistical curve, not an arbitrage-free model (see AFNS,
   Christensen–Diebold–Rudebusch 2011).
-* The recession probit rests on a handful of recessions. Treat its probabilities
-  as indicative. The inversion before the 2022–2024 period, for example, was not
+* The recession probit rests on a handful of recessions (four since 1990). Treat
+  its probabilities as indicative. The 2022–2024 inversion, for example, was not
   followed by an NBER recession within the usual window.
+* Confidence bands and forecast intervals reflect estimation noise under the
+  model. They do not cover model misspecification, and the forecast intervals
+  ignore parameter uncertainty.
 
 ## Background
 
 This project started as a sophomore-year script: a Nelson–Siegel fit to FRED data
-with a 3-D Plotly surface. Version 1.0 rebuilds it from the ground up. The
-[CHANGELOG](CHANGELOG.md) lists what was wrong with the original and how each
-problem was fixed.
+with a 3-D Plotly surface. Version 1.0 rebuilt it from the ground up. Version
+2.0 fits the quotes as what they are (par yields), checks the result against the
+Federal Reserve's curve, and adds robust fitting, uncertainty, a state-space
+model and real-time recession tests. The [CHANGELOG](CHANGELOG.md) lists what
+was wrong in each version and how it was fixed.
 
 ## References
 
 Nelson & Siegel (1987); Svensson (1994); Diebold & Li (2006); Gilli, Große &
 Schumann (2010); Estrella & Mishkin (1998); Litterman & Scheinkman (1991);
-Diebold & Mariano (1995); Willner (1996). Full citations are in
+Diebold & Mariano (1995); Willner (1996); Gürkaynak, Sack & Wright (2007);
+Diebold, Rudebusch & Aruoba (2006); Engstrom & Sharpe (2019); Huber (1964).
+Full citations are in
 [docs/methodology.md](docs/methodology.md#references).
 
 *Data: Board of Governors of the Federal Reserve System, H.15 Selected Interest

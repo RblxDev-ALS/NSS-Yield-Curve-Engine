@@ -48,11 +48,14 @@ f(\tau) = \frac{d}{d\tau}\big[\tau z(\tau)\big]
 $$
 
 Discount factors are $D(\tau) = e^{-z(\tau)\tau/100}$. A bond paying a coupon $c$
-semi-annually prices at par when
+semi-annually prices at par (clean) when
 
 $$
-c = 2\,\frac{1 - D(T)}{\sum_i D(t_i)}, \qquad t_i = T, T-\tfrac12, \dots > 0 .
+c = 2\,\frac{1 - D(T)}{\sum_i D(t_i) - a}, \qquad t_i = T, T-\tfrac12, \dots > 0 ,
 $$
+
+where $a = 1 - 2\min_i t_i$ is the accrued fraction of the current coupon
+period (zero for maturities that are whole half-years; see §2.4).
 
 Maturities of one year or less are quoted like bills, on a bond-equivalent basis:
 $y = 2\,(D^{-1/(2T)} - 1)$. The tests verify that the forward curve integrates
@@ -131,17 +134,57 @@ refines several distinct starts.
   (`benchmarks/tune_regularisation.py`). In-sample RMSE always prefers no
   regularization, so it is the wrong criterion.
 
-### 2.4 Fitting par yields
+### 2.4 Fitting par yields (the default)
 
-Treasury constant-maturity (CMT) yields are *par* yields, but $z(\tau)$ is a *zero*
-curve. Fitting $z$ directly to CMT quotes (the common shortcut, and Diebold–Li's
-choice) is a good approximation. With `--target par` the engine instead
-matches **model par yields** to the quotes. It starts from the variable-projection
-solution and refines all six parameters with bounded trust-region least squares.
+Treasury constant-maturity (CMT) yields are semi-annual *par* yields, but
+$z(\tau)$ is a continuously compounded *zero* curve. Fitting $z$ directly to CMT
+quotes (the common shortcut, and Diebold–Li's choice, `--target yield`) looks
+just as good in sample: on a simulated par-quoted market the in-sample RMSE of the
+two approaches is identical (1.36 vs 1.37 bp). The zero curve, however, is
+biased: it is 2.9 times further from the true curve (5.3 vs 1.9 bp), −5 bp at
+30 years, and the 5y5y forward is off by −7.5 bp. On real data the same
+correction moves the fitted curve 38% closer to the Federal Reserve's
+independently estimated curve (§3). The engine therefore matches **model par
+yields** to the quotes by default.
+
+For a bond with coupon dates $t_1 < \dots < t_n = T$ (every half year, counting
+back from $T$), the par coupon makes the *clean* price 100:
+
+$$
+c = 2\,\frac{1 - D(T)}{\sum_i D(t_i) - a}, \qquad a = 1 - 2\,t_1 ,
+$$
+
+where $a$ is the accrued fraction of the current coupon period ($a=0$ for whole
+half-years, as for every CMT tenor). Bills (≤ 1 year) are quoted on a
+bond-equivalent basis, $y = 2(e^{z/200}-1)$.
+
+**Calibration.** The par objective is not separable in β, so variable projection
+does not apply directly. The engine:
+
+1. estimates the *convexity gap* $g_i = \text{par}_i - z_i$ from last week's curve
+   (or a coarse grid fit),
+2. runs the global variable-projection search of §2.2 on the adjusted quotes
+   $y - g$, which puts the grid on (almost) the right problem,
+3. refines **every** basin it finds, plus last week's curve, in par space with
+   bounded trust-region least squares, screening them with a short polish and
+   fully refining the winner.
+
 The lambdas are reparametrized as $(\log\lambda_2,\ \log\lambda_1 - \log\lambda_2)$,
-which turns the ratio constraint into a simple bound. A test shows that fitting
-par quotes as if they were zero rates distorts the zero curve, while the par
-target recovers it exactly.
+which turns the ratio constraint into a box bound; if the optimum then wants
+$\lambda_1$ outside its own bounds, $\lambda_1$ is fixed at the bound and the rest
+re-solved. The Jacobian is analytic:
+
+$$
+\frac{\partial P}{\partial\theta} = 100\,\frac{-\partial_\theta D(T)\,A - (1-D(T))\,\partial_\theta A}{A^2},
+\qquad \partial_\theta D(t) = -D(t)\,\frac{t}{100}\,\partial_\theta z(t),
+$$
+
+with $A = (\sum_i D(t_i) - a)/2$, and coupon dates shared between bonds are
+evaluated once (60 instead of 154 curve points for the CMT tenors). Refining a
+single start from the zero-curve fit landed in a worse basin on 7% of simulated
+dates, costing a median 2.7 bp of RMSE; the multi-start matches a brute-force
+reference (a polish from every point of a λ grid) on 149 of 150 dates, the last
+within 0.001 bp. A par fit takes about 20 ms per week in panel mode.
 
 ### 2.5 Missing data
 
@@ -149,6 +192,43 @@ FRED tenors come and go over history: the 1-month bill starts in 2001, the
 20-year was not published from 1987 to 1993, and the 30-year paused from 2002 to
 2006. Each date is fitted on the tenors it actually has. Below 7 tenors the engine
 falls back to Nelson–Siegel, and below 4 it records a failed fit.
+
+### 2.6 Robust fitting (optional)
+
+`--robust` guards against bad quotes. It iteratively reweights the fit, first with
+Huber weights and then with Tukey's bisquare, which gives gross outliers zero
+weight. With 11 quotes and 6 parameters, NSS bends towards a bad quote at the
+ends of the curve and hides it in the raw residuals. The weights are therefore
+computed on **leverage-standardized** residuals $u_i = r_i/\sqrt{1-h_{ii}}$, where
+$h_{ii}$ is the diagonal of the *penalized* hat matrix
+
+$$
+H = W^{1/2} J\,(J^\top W J + P)^{-1} J^\top W^{1/2},
+$$
+
+$J$ is the Jacobian of the fitted quotes and $P$ the curvature of the ridge and
+λ-smoothing penalties. Omitting $P$ overstated the leverage of the 30-year point
+in panel fits and flagged 12% of *clean* 30-year quotes; with it, 0.2% of clean
+quotes are flagged. On a simulated market with a 50 bp error injected into one
+random quote per date, the robust fit cuts the zero-curve error from 11.5 to
+3.1 bp (1.7 bp without errors).
+
+On FRED data it is **off by default**. The quotes it rejects there are mostly
+persistent dislocations, not errors: the 20-year bond (13.6% of weeks) and the
+on-the-run 10-year (4.7%). Ignoring them moved the curve *away* from the Fed's
+curve (RMSE 11.0 vs 10.0 bp).
+
+### 2.7 Uncertainty
+
+Each fit reports the parameter covariance
+$\hat\sigma^2 (J^\top \tilde W J + S P)^{-1}$ and pointwise confidence bands for
+zero, par and forward rates by the delta method. The noise estimate
+$\hat\sigma$ uses the effective degrees of freedom $n - \operatorname{tr} H$, and the
+bands use a Student-t quantile. With 5 residual degrees of freedom a normal
+quantile gives only ~89% coverage for a nominal 95% band; the t quantile gives
+93–97% in simulation (tested). The individual betas are poorly identified, with
+large, strongly correlated standard errors, while the curve itself is pinned
+down to a few basis points.
 
 ## 3. Factor validation
 
@@ -164,6 +244,17 @@ falls back to Nelson–Siegel, and below 4 it records a failed fit.
   week to week. This is why the regime engine reads its slope off the fitted curve
   (the model-implied 10Y−3M, correlation 0.999 with the observed spread) rather
   than using $-\beta_1$ directly.
+
+### Agreement with the Federal Reserve's curve
+
+The Fed publishes its own daily Svensson curve (Gürkaynak, Sack & Wright, 2007).
+It is fitted to *off-the-run* notes and bonds, with no bills, no on-the-run
+issues and no 20-year bond, by minimizing duration-weighted price errors. That
+makes it an independent estimate of the same zero curve. `validation.py` compares
+the two on common dates, per maturity: bias, demeaned RMSE and the correlation
+of changes. Every FRED run of the pipeline reports it. Some persistent gap is
+expected, because on-the-run issues trade rich, so CMT-based curves sit a few
+basis points lower.
 
 ## 4. Macro regimes
 
@@ -182,6 +273,20 @@ read off the fitted curve, so it is defined even when a tenor is missing.
   gradient and Hessian. NBER recession months come from FRED (`USREC`).
   The engine reports McFadden's pseudo-R² and the ROC AUC. Standard errors are
   optimistic because the 12-month forecast windows overlap, and they are labeled as such.
+* **Near-term forward spread** (Engstrom & Sharpe, 2019): the 3-month forward
+  rate six quarters ahead minus today's 3-month rate,
+  $\frac{z(1.75)\cdot1.75 - z(1.5)\cdot 1.5}{0.25} - z(0.25)$, read off the fitted
+  curve. It measures the policy path the market expects; a negative value means
+  cuts are priced in.
+* **Pseudo-real-time evaluation.** In-sample AUCs flatter a model. The engine
+  re-estimates each probit every month on origins whose outcome was already
+  known ($s \le t - h$, optionally minus an NBER publication lag) and scores the
+  forecast it would have made (AUC, Brier score, log score). Early windows
+  contain one or two recessions, so the classes are often perfectly separable
+  and the maximum-likelihood slope diverges to ±∞. A weak Gaussian prior on the
+  slope coefficients (ridge, $\ell_2 = 1$) keeps those forecasts inside (0, 1).
+  The 10Y−3M spread, the near-term forward spread and both together are scored
+  on the same forecast months.
 * **Lead times**: each sustained inversion (≥ 3 months) is matched to the next
   recession start within 36 months. Inversions with no recession within that window are counted as false alarms.
 
@@ -197,6 +302,38 @@ $\hat y_{t+h}(\tau) = X(\tau)\hat f_{t+h|t}$. The evaluation is strictly out of 
 * Differences are tested with the **Diebold–Mariano** test, using the
   Harvey–Leybourne–Newbold small-sample correction and $h-1$ autocovariance lags
   for $h$-step forecasts.
+
+### 5.1 State-space dynamic Nelson–Siegel
+
+Diebold, Rudebusch & Aruoba (2006) estimate the model in one step as a linear
+Gaussian state-space system:
+
+$$
+y_t = \Lambda(\lambda) f_t + \varepsilon_t,\ \varepsilon_t\sim N(0,H);\qquad
+f_t - \mu = A(f_{t-1}-\mu) + \eta_t,\ \eta_t \sim N(0,Q),
+$$
+
+with $H$ diagonal. The Kalman filter gives the exact Gaussian likelihood, and
+λ, μ, $A$, $Q$ and $H$ are estimated jointly by maximum likelihood (L-BFGS-B on
+an unconstrained parametrization, started from the two-step estimates). Compared
+with the two-step approach it handles missing tenors exactly, weights maturities
+by their own noise, and yields **predictive distributions**.
+
+*Speed.* Because $H$ is diagonal, the update is done in information form
+(Woodbury), so only 3×3 matrices are inverted. The covariance recursion does not
+depend on the data. Once it has converged for the current set of observed
+maturities, the filter is in steady state, $f_t = G f_{t-1} + b_t$, and the whole
+stretch is run at once: $G$ is diagonalized and each mode is a scalar recursion
+(`scipy.signal.lfilter`). The log-likelihood matches a textbook covariance-form
+filter to $10^{-9}$, including missing and blank dates, and one fit on 400
+months takes about 3 s instead of about 60 s.
+
+`level_unit_root=True` makes the level a random walk. Out-of-sample forecasts are
+re-estimated every 12 months on past data only. The evaluation reports RMSE
+against the random walk and the coverage of 80% intervals. On data simulated
+from the model itself, with 20 years of training data, the intervals cover
+77–84%. They ignore parameter uncertainty, so with short training samples they
+are too narrow.
 
 ## 6. Risk and relative value
 
@@ -221,21 +358,27 @@ $\hat y_{t+h}(\tau) = X(\tau)\hat f_{t+h|t}$. The evaluation is strictly out of 
   mispricings.
 * The NSS model is a statistical fit, not an arbitrage-free model. For
   arbitrage-free dynamics see the AFNS model of Christensen, Diebold & Rudebusch (2011).
-* The probit uses one predictor and a handful of recessions. Its probabilities
-  are indicative and have wide uncertainty.
+* The probit rests on a handful of recessions (four since 1990). Its
+  probabilities are indicative and have wide uncertainty, which the
+  pseudo-real-time evaluation makes visible.
 
 ## References
 
+* Beaton, A. & Tukey, J. (1974). The fitting of power series, meaning polynomials, illustrated on band-spectroscopic data. *Technometrics*.
 * Christensen, J., Diebold, F. & Rudebusch, G. (2011). The affine arbitrage-free class of Nelson–Siegel term structure models. *Journal of Econometrics*.
 * Diebold, F. & Li, C. (2006). Forecasting the term structure of government bond yields. *Journal of Econometrics*.
 * Diebold, F. & Mariano, R. (1995). Comparing predictive accuracy. *Journal of Business & Economic Statistics*.
+* Diebold, F., Rudebusch, G. & Aruoba, S. B. (2006). The macroeconomy and the yield curve: a dynamic latent factor approach. *Journal of Econometrics*.
 * Duffee, G. (2002). Term premia and interest rate forecasts in affine models. *Journal of Finance*.
+* Durbin, J. & Koopman, S. J. (2012). *Time Series Analysis by State Space Methods*, 2nd ed. Oxford University Press.
+* Engstrom, E. & Sharpe, S. (2019). The near-term forward yield spread as a leading indicator: a less distorted mirror. *Financial Analysts Journal*.
 * Estrella, A. & Mishkin, F. (1998). Predicting U.S. recessions: financial variables as leading indicators. *Review of Economics and Statistics*.
 * Gilli, M., Große, S. & Schumann, E. (2010). Calibrating the Nelson–Siegel–Svensson model. COMISEF working paper.
 * Golub, G. & Pereyra, V. (1973). The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate. *SIAM Journal on Numerical Analysis*.
 * Gürkaynak, R., Sack, B. & Wright, J. (2007). The U.S. Treasury yield curve: 1961 to the present. *Journal of Monetary Economics*.
 * Harvey, D., Leybourne, S. & Newbold, P. (1997). Testing the equality of prediction mean squared errors. *International Journal of Forecasting*.
 * Ho, T. (1992). Key rate durations: measures of interest rate risks. *Journal of Fixed Income*.
+* Huber, P. (1964). Robust estimation of a location parameter. *Annals of Mathematical Statistics*.
 * Litterman, R. & Scheinkman, J. (1991). Common factors affecting bond returns. *Journal of Fixed Income*.
 * Nelson, C. & Siegel, A. (1987). Parsimonious modeling of yield curves. *Journal of Business*.
 * Svensson, L. (1994). Estimating and interpreting forward interest rates: Sweden 1992–1994. NBER Working Paper 4871.
