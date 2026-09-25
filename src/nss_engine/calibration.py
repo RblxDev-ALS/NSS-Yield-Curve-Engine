@@ -54,7 +54,7 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 from scipy.optimize import least_squares, minimize
 
 from .models import (
@@ -249,11 +249,11 @@ class FitResult:
         return np.asarray(self.weights * total / self.weights.sum())
 
     @property
-    def outliers(self) -> FloatArray:
+    def outliers(self) -> NDArray[np.bool_]:
         """Boolean mask of quotes the robust fit down-weighted."""
         if self.robust_weights is None:
             return np.zeros(self.maturities.size, dtype=bool)
-        return np.asarray(self.robust_weights < 1.0)
+        return np.asarray(self.robust_weights < 1.0, dtype=bool)
 
     @property
     def sigma_bp(self) -> float:
