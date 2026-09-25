@@ -328,6 +328,10 @@ stretch is run at once: $G$ is diagonalized and each mode is a scalar recursion
 filter to $10^{-9}$, including missing and blank dates, and one fit on 400
 months takes about 3 s instead of about 60 s.
 
+The measurement noise has a 1 bp floor. Without it the MLE drove the 3-year and
+6-month noise on FRED data to zero, a known degenerate optimum in which the
+filter treats one yield as exact.
+
 `level_unit_root=True` makes the level a random walk. Out-of-sample forecasts are
 re-estimated every 12 months on past data only. The evaluation reports RMSE
 against the random walk and the coverage of 80% intervals. On data simulated

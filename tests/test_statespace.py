@@ -129,3 +129,12 @@ def test_rolling_evaluation():
     # 80% intervals hold. (With ~70 months of training, estimation error that the
     # intervals ignore makes them far too narrow.)
     assert 0.7 < np.nanmean(cov) < 0.9
+
+
+def test_measurement_noise_has_a_floor(fitted):
+    from nss_engine.statespace import _H_FLOOR
+
+    tr = _Transform(MATS.size, "var", None, False)
+    theta = tr.pack(fitted.params)
+    theta[-MATS.size :] = -50.0  # push every noise sd towards zero
+    assert np.all(tr.unpack(theta).h >= _H_FLOOR)
