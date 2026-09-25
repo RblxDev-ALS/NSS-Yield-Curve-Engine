@@ -455,6 +455,44 @@ def real_time_evaluation(
     )
 
 
+def block_bootstrap_auc_difference(
+    scores_a: ArrayLike,
+    scores_b: ArrayLike,
+    labels: ArrayLike,
+    block: int = 24,
+    n_boot: int = 2000,
+    level: float = 0.9,
+    seed: int = 0,
+) -> tuple[float, float, float]:
+    """AUC(a) − AUC(b) with a moving-block bootstrap confidence interval.
+
+    Recession months come in episodes and 12-month-ahead targets overlap, so
+    months are far from independent; resampling whole blocks of ``block``
+    consecutive months (circularly) keeps that dependence. Both signals are
+    scored on the same resampled months. Returns ``(difference, lower, upper)``.
+    With only a few recessions in a sample the interval is wide - which is the
+    point of reporting it.
+    """
+    a = np.asarray(scores_a, dtype=float)
+    b = np.asarray(scores_b, dtype=float)
+    y = np.asarray(labels, dtype=int)
+    n = y.size
+    diff = roc_auc(a, y) - roc_auc(b, y)
+    rng = np.random.default_rng(seed)
+    n_blocks = int(np.ceil(n / block))
+    draws = np.empty(n_boot)
+    for k in range(n_boot):
+        starts = rng.integers(0, n, n_blocks)
+        idx = ((starts[:, None] + np.arange(block)[None, :]) % n).ravel()[:n]
+        draws[k] = roc_auc(a[idx], y[idx]) - roc_auc(b[idx], y[idx])
+    draws = draws[np.isfinite(draws)]
+    if draws.size < 0.5 * n_boot:
+        return diff, float("nan"), float("nan")
+    tail = (1 - level) / 2
+    lo, hi = np.quantile(draws, [tail, 1 - tail])
+    return float(diff), float(lo), float(hi)
+
+
 def compare_recession_predictors(
     candidates: dict[str, pd.Series | pd.DataFrame],
     recession: pd.Series,
@@ -465,7 +503,9 @@ def compare_recession_predictors(
     """In-sample fit and pseudo-real-time accuracy of several probit specifications.
 
     All models are scored on the same forecast origins, so their out-of-sample
-    numbers are comparable.
+    numbers are comparable. Each later candidate's out-of-sample AUC is also
+    compared with the first one's, with a 90% block-bootstrap interval
+    (:func:`block_bootstrap_auc_difference`).
     """
     rows, evals = {}, {}
     for name, x in candidates.items():
@@ -480,6 +520,7 @@ def compare_recession_predictors(
     for ev in evals.values():
         idx = ev.probabilities.index
         common = idx if common is None else common.intersection(idx)
+    base = None
     for name, ev in evals.items():
         sub = RealTimeEvaluation(ev.probabilities.loc[common], ev.outcomes.loc[common], ev.horizon)
         rows[name].update(
@@ -488,6 +529,13 @@ def compare_recession_predictors(
             log_score_out_of_sample=sub.log_score,
             n_forecasts=float(len(common)) if common is not None else 0.0,
         )
+        if base is None:
+            base = sub
+            continue
+        d, lo, hi = block_bootstrap_auc_difference(
+            sub.probabilities.to_numpy(), base.probabilities.to_numpy(), sub.outcomes.to_numpy()
+        )
+        rows[name].update(auc_gain_vs_first=d, auc_gain_lo90=lo, auc_gain_hi90=hi)
     out = pd.DataFrame(rows).T
     out.index.name = "predictors"
     return out

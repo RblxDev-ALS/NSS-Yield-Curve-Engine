@@ -219,6 +219,22 @@ def render_markdown(r: PipelineResult) -> str:
             )
         )
         add("")
+        if "auc_gain_vs_first" in rc.columns:
+            first = rc.index[0]
+            for name, row in rc.iloc[1:].iterrows():
+                lo, hi = row["auc_gain_lo90"], row["auc_gain_hi90"]
+                if not np.isfinite(lo):
+                    continue
+                verdict = (
+                    "the interval includes zero, so the gain is not statistically clear"
+                    if lo <= 0 <= hi
+                    else "the interval excludes zero"
+                )
+                add(
+                    f"* {name} vs {first}: out-of-sample AUC {row['auc_gain_vs_first']:+.3f}, "
+                    f"90% block-bootstrap interval [{lo:+.3f}, {hi:+.3f}]; {verdict}."
+                )
+            add("")
         add(
             f"Latest near-term forward spread: **{r.spreads['near_term_fwd'].iloc[-1]:+.2f} pp** "
             "(negative = rate cuts priced in)."

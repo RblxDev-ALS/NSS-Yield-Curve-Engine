@@ -203,6 +203,27 @@ class TestRealTimeRecessionModel:
         assert table.loc["spread", "auc_out_of_sample"] > table.loc["noise", "auc_out_of_sample"]
         assert len(set(table["n_forecasts"])) == 1  # scored on common origins
         assert table.loc["both", "pseudo_r2"] >= table.loc["spread", "pseudo_r2"] - 1e-9
+        # Gains are measured against the first candidate, with an interval around them.
+        assert np.isnan(table.loc["spread", "auc_gain_vs_first"])
+        gain = table.loc["noise"]
+        assert gain["auc_gain_vs_first"] == pytest.approx(
+            gain["auc_out_of_sample"] - table.loc["spread", "auc_out_of_sample"]
+        )
+        assert gain["auc_gain_lo90"] <= gain["auc_gain_vs_first"] <= gain["auc_gain_hi90"]
+
+    def test_block_bootstrap_auc_difference(self):
+        rng = np.random.default_rng(1)
+        n = 400
+        y = (np.sin(np.arange(n) / 15) > 0.7).astype(int)  # episodes, like recessions
+        good = y + rng.normal(0, 0.5, n)
+        weak = y + rng.normal(0, 3.0, n)
+        d, lo, hi = regime.block_bootstrap_auc_difference(good, weak, y, n_boot=500)
+        assert d > 0 and lo > 0 and lo <= d <= hi  # a real gap is detected
+        d0, lo0, hi0 = regime.block_bootstrap_auc_difference(good, good, y, n_boot=200)
+        assert d0 == 0 and lo0 == 0 and hi0 == 0
+        # No recessions at all: no interval rather than a misleading one
+        none = np.zeros(n, dtype=int)
+        assert np.isnan(regime.block_bootstrap_auc_difference(good, weak, none, n_boot=50)).all()
 
     def test_multi_predictor_names(self, data):
         spread, rec = data
