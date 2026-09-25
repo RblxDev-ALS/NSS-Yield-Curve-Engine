@@ -442,12 +442,19 @@ class TestRobustFitting:
 
 class TestUncertainty:
     def test_leverage_sums_to_number_of_parameters(self, maturities, humped_curve):
-        res = calibrate(maturities, humped_curve.par_yield(maturities) + 0.01 * np.cos(maturities))
+        y = humped_curve.par_yield(maturities) + 0.01 * np.cos(maturities)
+        res = calibrate(maturities, y, CalibrationConfig(ridge=0.0))
         assert res.leverage.sum() == pytest.approx(6.0, abs=1e-8)
-        ns = calibrate(
-            maturities, humped_curve.par_yield(maturities), CalibrationConfig(model="ns")
-        )
+        assert res.dof == pytest.approx(maturities.size - 6)
+        ns = calibrate(maturities, y, CalibrationConfig(model="ns", ridge=0.0))
         assert ns.n_params == 4 and ns.leverage.sum() == pytest.approx(4.0, abs=1e-8)
+        # Penalties pin parameters partly, so they use up less than a full degree of freedom.
+        ridged = calibrate(maturities, y)
+        assert 5.0 < ridged.leverage.sum() < 6.0
+        smoothed = calibrate(
+            maturities, y, CalibrationConfig(lambda_smoothing=0.1), previous=res.curve
+        )
+        assert smoothed.leverage.sum() < ridged.leverage.sum()
 
     def test_bands_have_nominal_coverage(self, maturities, humped_curve):
         rng = np.random.default_rng(0)

@@ -31,6 +31,14 @@ def test_pipeline_result(result):
     assert set(result.forecast_eval.relative_rmse.index) == {1, 12}
     assert result.forecast_curve is not None
     assert "10Y par bond" in result.risk
+    # Validation against the known truth, robust-fit statistics, latest-fit bands
+    ref = s["reference_curve"]
+    assert "true curve" in ref["name"] and ref["rmse_bp"] < 5 and ref["mean_change_corr"] > 0.8
+    assert abs(ref["bias_bp"]["10Y"]) < 2
+    assert 0 <= s["outliers"]["share_of_quotes"] < 0.02
+    assert s["fit_quality_bp"]["rmse_clean_median"] <= s["fit_quality_bp"]["rmse_median"]
+    lo, hi = result.latest_fit.confidence_band([2, 10])
+    assert np.all(hi - lo > 0)
     json.dumps(s)  # fully serialisable
 
 
@@ -44,6 +52,8 @@ def test_write_outputs(result, tmp_path):
     assert {"regime", "slope", "recession_prob_12m"} <= set(signals.columns)
     report = paths["report"].read_text()
     assert "Synthetic data" in report and "Recession probability" in report
+    assert "Validation against the true curve" in report and "zero_95ci_bp" in report
+    assert paths["outliers"].exists() and paths["reference"].exists()
     html = paths["dashboard"].read_text()
     assert html.count("plotly-graph-div") >= 8
     assert 'src="https://cdn.plot.ly' in html  # default: load plotly.js from the CDN
@@ -67,6 +77,24 @@ def test_par_target_pipeline(long_market):
     r = run_pipeline(cfg, data=(y, None, None))
     assert r.recession_model is None and r.forecast_eval is None
     assert np.isfinite(r.summary["fit_quality_bp"]["rmse_median"])
+
+
+def test_gsw_reference_for_fred_source(monkeypatch, small_market):
+    from nss_engine import pipeline
+    from nss_engine.data import DataError
+
+    cfg = PipelineConfig(source="fred", run_forecasts=False)
+    monkeypatch.setattr(pipeline, "load_gsw_parameters", lambda *a, **k: small_market.true_params)
+    params, name = pipeline._reference_params(cfg, None)
+    assert "GSW" in name and params is small_market.true_params
+
+    def offline(*a, **k):
+        raise DataError("offline")
+
+    monkeypatch.setattr(pipeline, "load_gsw_parameters", offline)
+    assert pipeline._reference_params(cfg, None) == (None, None)
+    r = run_pipeline(cfg, data=(small_market.yields.iloc[:30], None, None))
+    assert r.reference is None and "reference_curve" not in r.summary
 
 
 def test_csv_source(tmp_path, small_market):

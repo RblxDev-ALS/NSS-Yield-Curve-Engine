@@ -190,6 +190,8 @@ class FitResult:
     jacobian: FloatArray | None = None
     #: Which of the six parameters were estimated.
     active: tuple[bool, ...] = (True,) * 6
+    #: Diagonal curvature of the ridge / λ-smoothing penalties in parameter space.
+    penalty: FloatArray | None = None
 
     @property
     def residuals_bp(self) -> FloatArray:
@@ -212,15 +214,39 @@ class FitResult:
 
     @property
     def leverage(self) -> FloatArray:
-        """Diagonal of the (weighted, linearised) hat matrix, ``h_ii`` in [0, 1].
+        """Diagonal of the (weighted, penalised, linearised) hat matrix, ``h_ii`` in [0, 1].
 
-        ``Σ h_ii`` equals the number of fitted parameters. A tenor with ``h_ii``
-        near 1 essentially pins a parameter: its residual is small whatever
-        its quote, so fit residuals alone cannot reveal a bad quote there.
+        Without penalties ``Σ h_ii`` equals the number of fitted parameters; the
+        ridge and λ-smoothing penalties pin parameters partly, lowering it. A
+        tenor with ``h_ii`` near 1 essentially determines a parameter: its
+        residual is small whatever its quote, so raw residuals cannot reveal a
+        bad quote there.
         """
         if self.jacobian is None or self.weights is None:
             return np.full(self.maturities.size, np.nan)
-        return _leverage(self.jacobian[:, list(self.active)], self.weights)
+        act = list(self.active)
+        pen = None if self.penalty is None else self.penalty[act]
+        return _leverage(self.jacobian[:, act], self.weights, pen)
+
+    @property
+    def dof(self) -> float:
+        """Residual degrees of freedom: effective number of quotes minus ``Σ h_ii``."""
+        n_eff = (
+            float(np.sum(self.robust_weights))
+            if self.robust_weights is not None
+            else float(self.maturities.size)
+        )
+        return n_eff - float(np.nansum(self.leverage))
+
+    def _unit_weights(self) -> FloatArray:
+        """Weights rescaled so an ordinary (non-rejected) quote has weight ≈ 1."""
+        assert self.weights is not None
+        total = (
+            float(np.sum(self.robust_weights))
+            if self.robust_weights is not None
+            else float(self.maturities.size)
+        )
+        return np.asarray(self.weights * total / self.weights.sum())
 
     @property
     def outliers(self) -> FloatArray:
@@ -232,17 +258,17 @@ class FitResult:
     @property
     def sigma_bp(self) -> float:
         """Estimated quote noise: weighted residual RMS with a degrees-of-freedom correction."""
-        dof = self.maturities.size - self.n_params
-        if dof <= 0 or self.weights is None:
+        if self.weights is None or self.jacobian is None or not self.dof > 0.5:
             return float("nan")
-        wn = self.weights / self.weights.mean()
-        return float(np.sqrt(np.sum(wn * self.residuals_bp**2) / dof))
+        wn = self._unit_weights()
+        return float(np.sqrt(np.sum(wn * self.residuals_bp**2) / self.dof))
 
     def covariance(self) -> FloatArray:
         """Asymptotic covariance of the six parameters (zeros for fixed ones).
 
-        Weighted least squares: ``σ̂² (Jᵀ W̃ J)⁻¹`` with ``W̃`` the weights scaled
-        to mean 1 and ``σ̂`` from :attr:`sigma_bp`. NSS parameters are poorly
+        Penalised weighted least squares: ``σ̂² (Jᵀ W̃ J + S·P)⁻¹`` with ``W̃`` the
+        weights scaled so an ordinary quote has weight 1 (``S = Σ W̃``), ``P``
+        the penalty curvature and ``σ̂`` from :attr:`sigma_bp`. NSS parameters are poorly
         identified individually - expect large, strongly correlated errors on
         the betas - while the *curve* is pinned down tightly (see
         :meth:`confidence_band`).
@@ -252,8 +278,10 @@ class FitResult:
             return cov
         act = np.flatnonzero(self.active)
         J = self.jacobian[:, act]
-        wn = self.weights / self.weights.mean()
+        wn = self._unit_weights()
         info = J.T @ (J * wn[:, None])
+        if self.penalty is not None:
+            info = info + wn.sum() * np.diag(self.penalty[act])
         sigma = self.sigma_bp / 100.0
         cov[:] = 0.0
         cov[np.ix_(act, act)] = sigma**2 * np.linalg.pinv(info)
@@ -267,15 +295,15 @@ class FitResult:
     ) -> tuple[FloatArray, FloatArray]:
         """Pointwise delta-method band ``(lower, upper)`` for ``zero``/``par``/``forward``.
 
-        Uses a Student-t quantile with ``n − p`` degrees of freedom: with 11
+        Uses a Student-t quantile with :attr:`dof` degrees of freedom: with 11
         quotes and 6 parameters there are only 5, and a normal quantile gives
         ~89% coverage for a nominal 95% band (checked by simulation in the
         tests). Reflects parameter estimation error only, not misspecification.
         """
         from scipy.stats import t as student_t
 
-        dof = self.maturities.size - self.n_params
-        z = float(student_t.ppf(0.5 + level / 2.0, dof)) if dof > 0 else float("nan")
+        dof = self.dof
+        z = float(student_t.ppf(0.5 + level / 2.0, dof)) if dof > 0.5 else float("nan")
         tau = np.atleast_1d(np.asarray(tau, dtype=float))
         centre = self.curve.evaluate(tau, measure)
         cov = self.covariance()
@@ -547,6 +575,11 @@ def calibrate(
     params, loss, n_evals, ok, msg, fitted, jac = fit_once(w)
     huber = np.ones(tau.size)
     w_used = w
+    act = list(active)
+
+    def penalty(p: FloatArray) -> FloatArray:
+        return _penalty_diag(p, cfg, active, previous)
+
     if cfg.robust and tau.size > sum(active):
         # Huber first (convex, so it converges from the ordinary fit), then
         # Tukey's bisquare, which gives gross outliers zero weight.
@@ -555,7 +588,7 @@ def calibrate(
         reweighted = False
         for kind in ("huber", "bisquare"):
             for _ in range(_ROBUST_MAX_ITER):
-                lev = _leverage(jac[:, list(active)], w_used)
+                lev = _leverage(jac[:, act], w_used, penalty(params)[act])
                 new = _robust_weights(y - fitted, lev, cfg, kind)
                 if (new > 0.5).sum() <= sum(active):  # too few clean quotes left
                     break
@@ -595,6 +628,7 @@ def calibrate(
         robust_weights=huber,
         jacobian=jac * np.asarray(active, dtype=float)[None, :],
         active=active,
+        penalty=penalty(params),
     )
 
 
@@ -628,12 +662,32 @@ def _fit_jacobian(
     return X @ b, np.column_stack([X, dX[0] @ b, dX[1] @ b])
 
 
-def _leverage(J: FloatArray, w: FloatArray) -> FloatArray:
-    """``diag(W^½ J (Jᵀ W J)⁻¹ Jᵀ W^½)`` via a thin QR (numerically stable)."""
+def _penalty_diag(
+    params: FloatArray, cfg: CalibrationConfig, active: tuple[bool, ...], previous: NSSCurve | None
+) -> FloatArray:
+    """Curvature of the penalties w.r.t. ``[β0..β3, λ1, λ2]`` (diagonal).
+
+    Ridge ``ρ β²`` contributes ``ρ``; smoothing ``s (log λ − log λ_prev)²``
+    contributes ``s / λ²`` (Gauss-Newton), only when a previous curve anchors it.
+    """
+    pen = np.zeros(6)
+    pen[2] = cfg.ridge
+    pen[3] = cfg.ridge if active[3] else 0.0
+    anchored = previous is not None and np.all(np.isfinite(previous.as_array()))
+    if cfg.lambda_smoothing > 0 and anchored and np.all(np.isfinite(params[4:6])):
+        pen[4:6] = cfg.lambda_smoothing / params[4:6] ** 2
+    return pen * np.asarray(active, dtype=float)
+
+
+def _leverage(J: FloatArray, w: FloatArray, penalty: FloatArray | None = None) -> FloatArray:
+    """``diag(W^½ J (Jᵀ W J + P)⁻¹ Jᵀ W^½)`` via a thin QR of the augmented system."""
     if not np.all(np.isfinite(J)):
         return np.full(J.shape[0], np.nan)
-    q, _ = np.linalg.qr(np.sqrt(w)[:, None] * J)
-    return np.clip(np.sum(q**2, axis=1), 0.0, 1.0)
+    A = np.sqrt(w)[:, None] * J
+    if penalty is not None and np.any(penalty > 0):
+        A = np.vstack([A, np.diag(np.sqrt(penalty))])
+    q, _ = np.linalg.qr(A)
+    return np.clip(np.sum(q[: J.shape[0]] ** 2, axis=1), 0.0, 1.0)
 
 
 def _robust_weights(
