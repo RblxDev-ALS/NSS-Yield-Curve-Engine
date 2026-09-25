@@ -142,3 +142,47 @@ def test_forward_identity_property(b0, b1, b2, b3, l1, l2):
     h = 1e-5
     dz = (c.zero(tau + h) - c.zero(tau - h)) / (2 * h)
     np.testing.assert_allclose(c.forward(tau), c.zero(tau) + tau * dz, atol=1e-6)
+
+
+class TestOffGridParYields:
+    """Maturities that are not whole coupon periods: stub coupon and accrued interest."""
+
+    def test_coupon_schedule(self):
+        from nss_engine.models import coupon_schedule
+
+        times, accrued = coupon_schedule(1.3)
+        np.testing.assert_allclose(times, [0.3, 0.8, 1.3])
+        assert accrued == pytest.approx(0.4)  # 0.2 of the 0.5-year period has elapsed
+        times, accrued = coupon_schedule(10.0)
+        assert times.size == 20 and times[0] == pytest.approx(0.5) and accrued == 0.0
+
+    def test_par_curve_is_smooth(self):
+        """Dropping the stub coupon / ignoring accrued made the par curve a sawtooth."""
+        curve = NSSCurve(4.5, -2.0, -1.5, 2.0, 0.9, 0.15)
+        grid = np.linspace(1.01, 30, 3000)
+        par = curve.par_yield(grid)
+        jumps = np.abs(np.diff(par))
+        assert jumps.max() < 0.005  # < 0.5 bp between points 1 day apart
+
+    def test_off_grid_par_bond_has_clean_price_100(self):
+        from nss_engine.analytics import Bond, price
+        from nss_engine.models import coupon_schedule
+
+        curve = NSSCurve(4.5, -2.0, -1.5, 2.0, 0.9, 0.15)
+        for maturity in (1.3, 7.8, 12.25):
+            bond = Bond.par(curve, maturity)
+            _, accrued = coupon_schedule(maturity)
+            clean = price(curve, bond) - accrued * bond.coupon / bond.freq
+            assert clean == pytest.approx(100.0, abs=1e-9)
+
+    def test_calibration_operator_agrees_off_grid(self):
+        from nss_engine.calibration import _ParOperator
+
+        curve = NSSCurve(4.5, -2.0, -1.5, 2.0, 0.9, 0.15)
+        tau = np.array([0.25, 1.3, 2.75, 7.8, 12.25, 30.0])
+        op = _ParOperator(tau)
+        p = curve.as_array()
+        value, jac = op.value_and_jacobian(p)
+        np.testing.assert_allclose(value, curve.par_yield(tau), atol=1e-12)
+        fd = np.column_stack([(op(p + e) - op(p - e)) / 2e-6 for e in np.eye(6) * 1e-6])
+        np.testing.assert_allclose(jac, fd, atol=1e-6 * np.abs(fd).max())

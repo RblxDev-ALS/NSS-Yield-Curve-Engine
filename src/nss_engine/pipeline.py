@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from . import analytics, forecasting, regime
+from . import analytics, forecasting, regime, statespace
 from .calibration import (
     DEFAULT_PANEL_SMOOTHING,
     CalibrationConfig,
@@ -51,9 +51,7 @@ class PipelineConfig:
     end: str | None = None
     freq: str = "W-FRI"
     calibration: CalibrationConfig = field(
-        default_factory=lambda: CalibrationConfig(
-            lambda_smoothing=DEFAULT_PANEL_SMOOTHING, robust=True
-        )
+        default_factory=lambda: CalibrationConfig(lambda_smoothing=DEFAULT_PANEL_SMOOTHING)
     )
     slope_long: float = 10.0
     slope_short: float = 0.25  # 10y-3m: the NY Fed / Estrella-Mishkin spread
@@ -90,6 +88,8 @@ class PipelineResult:
     true_params: pd.DataFrame | None = None
     latest_fit: FitResult | None = None
     recession_comparison: pd.DataFrame | None = None
+    dns: statespace.DNSResult | None = None
+    dns_forecast: pd.DataFrame | None = None
     reference: ReferenceComparison | None = None
     reference_name: str | None = None
     summary: dict[str, Any] = field(default_factory=dict)
@@ -218,6 +218,7 @@ def run_pipeline(
 
     # ---- forecasts ------------------------------------------------------------------
     fc_eval, fc_curve = None, None
+    dns, dns_forecast = None, None
     if cfg.run_forecasts:
         monthly = yields.resample("ME").mean().dropna(how="all")
         core = monthly.dropna(axis=1, thresh=int(0.9 * len(monthly))).dropna()
@@ -229,6 +230,8 @@ def run_pipeline(
             fc_curve = forecasting.forecast_curve(
                 core, max(cfg.forecast_horizons), maturities=list(yields.columns)
             )
+            say("fitting the state-space dynamic Nelson-Siegel model")
+            dns, dns_forecast = _fit_dns(core, max(cfg.forecast_horizons))
 
     # ---- relative value, carry, risk -------------------------------------------------
     say("computing relative value and risk")
@@ -262,12 +265,38 @@ def run_pipeline(
         true_params=true_params,
         latest_fit=latest_fit,
         recession_comparison=rec_comparison,
+        dns=dns,
+        dns_forecast=dns_forecast,
         reference=reference,
         reference_name=reference_name if reference is not None else None,
     )
     result.summary = build_summary(result)
     say("done")
     return result
+
+
+def _fit_dns(
+    monthly: pd.DataFrame, horizon: int
+) -> tuple[statespace.DNSResult | None, pd.DataFrame | None]:
+    """State-space DNS fit and an ``horizon``-month forecast with an 80% interval."""
+    try:
+        dns = statespace.fit_dns(monthly)
+    except (ValueError, np.linalg.LinAlgError):
+        return None, None
+    mean, cov = dns.forecast(horizon)
+    sd = np.sqrt(np.diag(cov))
+    z = 1.2816  # 80% central interval
+    last = monthly.iloc[-1].to_numpy()
+    table = pd.DataFrame(
+        {
+            "latest_pct": last,
+            "forecast_pct": mean,
+            "lower_80_pct": mean - z * sd,
+            "upper_80_pct": mean + z * sd,
+        },
+        index=pd.Index([maturity_label(float(m)) for m in monthly.columns], name="tenor"),
+    )
+    return dns, table
 
 
 def _spread_label(cfg: PipelineConfig) -> str:
@@ -351,6 +380,11 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
             "share_ns_fallback": float((diag["model"] == "ns").mean()),
             "rmse_clean_median": diag["rmse_clean_bp"].median(),
             "sigma_median": diag["sigma_bp"].median(),
+            "share_lambda_at_bound": _share_at_bounds(r.fit),
+            "not_converged_reasons": diag.loc[~diag["success"].astype(bool), "message"]
+            .value_counts()
+            .head(3)
+            .to_dict(),
         },
         "regime": {
             "current": str(current["regime"]),
@@ -388,6 +422,21 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
             "followed_by_recession": int(lt["lead_months"].notna().sum()),
             "median_lead_months": lt["lead_months"].median(),
         }
+    if r.dns is not None:
+        s["state_space_dns"] = {
+            "lambda": r.dns.params.lam,
+            "loglik": r.dns.loglik,
+            "persistence": np.diag(r.dns.params.A).tolist(),
+            "noise_bp": dict(
+                zip(
+                    [maturity_label(float(m)) for m in r.dns.maturities],
+                    (r.dns.params.h * 100).tolist(),
+                    strict=True,
+                )
+            ),
+        }
+        if r.dns_forecast is not None:
+            s["state_space_dns"]["forecast"] = r.dns_forecast.to_dict(orient="index")
     if r.forecast_eval is not None:
         rel = r.forecast_eval.relative_rmse
         s["forecast_relative_rmse"] = {f"h={h}": rel.loc[h].to_dict() for h in rel.index}
@@ -411,6 +460,17 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
             "bias_bp": r.reference.summary()["bias_bp"].to_dict(),
         }
     return _clean(s)
+
+
+def _share_at_bounds(fit: PanelFit) -> dict[str, float]:
+    """Share of dates on which each decay rate sits at one of its bounds."""
+    cfg = fit.config
+    out = {}
+    for name, (lo, hi) in (("lambda1", cfg.lambda1_bounds), ("lambda2", cfg.lambda2_bounds)):
+        lam = fit.params[name]
+        out[f"{name}_lower"] = float((lam <= lo * (1 + 1e-6)).mean())
+        out[f"{name}_upper"] = float((lam >= hi * (1 - 1e-6)).mean())
+    return out
 
 
 def _spread_tracking(spreads: pd.DataFrame) -> dict[str, float]:

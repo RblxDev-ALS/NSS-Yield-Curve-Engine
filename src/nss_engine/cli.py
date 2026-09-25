@@ -52,8 +52,10 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--robust",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="down-weight bad quotes (Huber/bisquare reweighting); default on",
+        default=False,
+        help="down-weight bad quotes (Huber/bisquare reweighting). Off by default: on "
+        "FRED data it mostly rejects persistent 10Y/20Y dislocations, and the curve then "
+        "agrees less well with the Fed's",
     )
 
 

@@ -12,7 +12,12 @@ from nss_engine.pipeline import PipelineConfig, run_pipeline, write_outputs
 @pytest.fixture(scope="module")
 def result(long_market):
     monthly = long_market.yields.resample("ME").last()
-    cfg = PipelineConfig(source="synthetic", freq="ME", forecast_horizons=(1, 12))
+    cfg = PipelineConfig(
+        source="synthetic",
+        freq="ME",
+        forecast_horizons=(1, 12),
+        calibration=CalibrationConfig(lambda_smoothing=1e-3, robust=True),
+    )
     return run_pipeline(
         cfg, data=(monthly, long_market.recession, long_market.true_params.resample("ME").last())
     )
@@ -40,7 +45,18 @@ def test_pipeline_result(result):
     assert {"10Y−3M spread", "near-term forward spread", "both"} <= set(preds)
     assert 0 <= preds["both"]["auc_out_of_sample"] <= 1
     assert "near_term_fwd" in result.spreads
+    dns = s["state_space_dns"]
+    assert 0.1 < dns["lambda"] < 3
+    fc = pd.DataFrame(dns["forecast"]).T
+    assert (fc["lower_80_pct"] < fc["forecast_pct"]).all()
+    assert (fc["forecast_pct"] < fc["upper_80_pct"]).all()
     assert s["fit_quality_bp"]["rmse_clean_median"] <= s["fit_quality_bp"]["rmse_median"]
+    assert set(s["fit_quality_bp"]["share_lambda_at_bound"]) == {
+        "lambda1_lower",
+        "lambda1_upper",
+        "lambda2_lower",
+        "lambda2_upper",
+    }
     lo, hi = result.latest_fit.confidence_band([2, 10])
     assert np.all(hi - lo > 0)
     json.dumps(s)  # fully serialisable
@@ -57,11 +73,14 @@ def test_write_outputs(result, tmp_path):
     report = paths["report"].read_text()
     assert "Synthetic data" in report and "Recession probability" in report
     assert "Validation against the true curve" in report and "zero_95ci_bp" in report
-    assert "pseudo-real time" in report
+    assert "pseudo-real time" in report and "State-space dynamic Nelson-Siegel" in report
     assert paths["outliers"].exists() and paths["reference"].exists()
     html = paths["dashboard"].read_text()
     assert html.count("plotly-graph-div") >= 8
     assert 'src="https://cdn.plot.ly' in html  # default: load plotly.js from the CDN
+    # plotly.js must load before the first chart on the page
+    assert html.index('src="https://cdn.plot.ly') < html.index("plotly-graph-div")
+    assert "Validation against" in html and "Near-term forward spread" in html
     assert "prefers-color-scheme: dark" in html
 
 

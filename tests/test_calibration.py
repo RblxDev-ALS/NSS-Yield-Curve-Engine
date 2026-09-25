@@ -488,3 +488,15 @@ class TestUncertainty:
         few = calibrate(tau[:4], humped_curve.par_yield(tau[:4]), CalibrationConfig(model="ns"))
         assert np.isnan(few.sigma_bp)
         assert np.all(np.isnan(few.confidence_band([1, 2])[0]))
+
+
+def test_par_fit_with_lambda1_at_its_upper_bound(maturities):
+    """A very short hump (λ1 = 5 > 3) must pin λ1 at its bound, not abandon the par fit."""
+    true = NSSCurve(4.0, -2.0, 6.0, -3.0, 4.0, 1.0)
+    res = calibrate(maturities, true.par_yield(maturities))
+    assert res.success
+    assert res.curve.lambda1 == pytest.approx(CalibrationConfig().lambda1_bounds[1])
+    assert res.curve.lambda1 >= CalibrationConfig().min_lambda_ratio * res.curve.lambda2 - 1e-9
+    # ... and match the best par fit with λ1 fixed at that bound
+    pinned = calibrate(maturities, true.par_yield(maturities), CalibrationConfig(fixed_lambda1=3.0))
+    assert res.loss <= pinned.loss * (1 + 1e-6)
