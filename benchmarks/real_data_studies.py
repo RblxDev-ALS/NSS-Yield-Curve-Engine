@@ -235,6 +235,8 @@ def gsw_study(monthly: pd.DataFrame, reference: pd.DataFrame, source: str) -> No
         n = len(ref.index.intersection(no_long))
         print(f"\nRMSE (bp) in the {n} months without a 30-year quote:\n")
         print(pd.DataFrame(gap_rows).T.round(1).to_markdown())
+    else:
+        print("\n(No month in this sample lacks a 30-year quote.)")
 
 
 if __name__ == "__main__":

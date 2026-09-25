@@ -3,7 +3,7 @@
 [![CI](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml)
 [![Live dashboard](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml)
 ![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
-![Tests](https://img.shields.io/badge/tests-163%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-169%20passing-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
 
 A Python engine that fits the **Nelson–Siegel–Svensson (NSS)** model to the U.S.
@@ -30,8 +30,8 @@ From the latest run of the [live workflow](https://github.com/RblxDev-ALS/NSS-Yi
 | Calibration speed | ~26 ms per curve (par fit), so 36 years of weekly curves take about 70 s |
 | Model-implied vs observed 10Y−3M spread | correlation **0.999**, mean absolute gap 5 bp |
 | Inversions detected (≥ 3 months, 10Y−3M) | 2000, 2006, 2019: each followed by a recession after **8, 18 and 10 months**. 2022–24: the deepest inversion in the sample (−1.8 pp, 25 months), with no recession so far |
-| Recession prediction, **pseudo-real time** | out-of-sample AUC **0.71** for the near-term forward spread vs 0.61 for 10Y−3M (both 0.78 in sample) |
-| Forecasts vs random walk | the random walk **wins** for every model at 1, 6 and 12 months (RMSE ratios 1.02–1.24) |
+| Recession prediction, **pseudo-real time** | out-of-sample AUC **0.71** for the near-term forward spread vs 0.61 for 10Y−3M (both 0.78 in sample). With only three recessions to score, the 90% interval on the gap, [−0.04, +0.21], includes zero |
+| Forecasts vs random walk | the random walk **wins** for every model at 1, 6 and 12 months (RMSE ratios 1.02–1.24). An equal model + random-walk average ties it (0.99–1.01) |
 
 ### The biggest fix in 2.0: the quotes are par yields
 
@@ -80,9 +80,22 @@ forecast months):
 The **near-term forward spread** (Engstrom & Sharpe, 2019) is read straight off
 the NSS forward curve: the 3-month rate expected 18 months ahead minus today's.
 It measures whether markets expect the Fed to *cut*, and out of sample it ranks
-recession risk clearly better than the classic spread. Putting both signals in
-one model looks best in sample and is the **worst** out of sample. With four
-recessions since 1990 there is too little data for two slopes.
+recession risk better than the classic spread, by +0.10 AUC.
+
+**How sure is that?** Not very. The forecast window holds only three
+recessions, so 2.1 puts a 90% block-bootstrap interval on each gap
+(24-month blocks, because recession months are strongly dependent):
+
+| vs 10Y−3M, out of sample | AUC gain | 90% interval |
+|---|---:|---:|
+| near-term forward spread | +0.099 | [−0.035, +0.205] |
+| both signals together | −0.110 | [−0.167, +0.008] |
+
+Both intervals include zero. The forward spread *points* to being the better
+signal, as Engstrom & Sharpe found on longer data, but this sample cannot
+prove it. Putting both signals in one model looks best in sample and is the
+worst out of sample, which is the classic sign of overfitting with too few
+recessions for two slopes, although that gap is not statistically clear either.
 
 ### Forecasting: the random walk still wins
 
@@ -97,11 +110,19 @@ model but still loses to no-change:
 | model (re-estimated on past data only) | 1 month | 6 months | 12 months | 80% interval coverage (1 / 6 / 12m) |
 |---|---:|---:|---:|---:|
 | Diebold–Li, AR(1) factors | 1.112 | 1.072 | 1.090 | – |
-| Diebold–Li, VAR(1) factors | 1.089 | **1.018** | **1.028** | – |
-| state-space, VAR(1) | **1.088** | 1.029 | 1.048 | 86% / 79% / 73% |
+| Diebold–Li, VAR(1) factors | 1.089 | 1.018 | 1.028 | – |
+| state-space, VAR(1) | 1.088 | 1.029 | 1.048 | 86% / 79% / 73% |
 | state-space, random-walk level | 1.103 | 1.062 | 1.073 | 85% / 79% / 77% |
+| ½ state-space VAR(1) + ½ random walk | **1.011** | **0.990** | **0.996** | – |
+| ½ Diebold–Li VAR(1) + ½ random walk | 1.013 | 0.994 | 1.002 | – |
 
-(RMSE relative to the random walk, averaged over tenors; < 1 would beat it.)
+(RMSE relative to the random walk, averaged over tenors; < 1 beats it.)
+The last two rows are new in 2.1: an equal average of the model and "no
+change", with no weights estimated, so it cannot overfit. It edges the random
+walk by 1% at 6 and 12 months. That is the first ratio below 1 in the project,
+but a 1% edge that has not been significance-tested should be read as a tie,
+not a win. The practical lesson is the usual one: shrink model forecasts
+towards "no change".
 The state-space intervals are well calibrated at short horizons and somewhat
 too narrow at 12 months, because they ignore parameter uncertainty.
 
@@ -132,6 +153,11 @@ This uses 441 month-end curves from 1990 to 2026
 | NSS, each date fitted independently | 8.69 bp | 23.9 bp |
 | **NSS + λ smoothing (default)** | **8.34 bp** | 23.4 bp |
 | NSS + λ smoothing, zero target (1.x) | 8.31 bp | 29.2 bp |
+
+2.1 also keeps NSS's second hump from peaking beyond the longest quote it is
+given (the hump peaks at λτ ≈ 1.79). It follows the calibrator's own design rule
+but barely matters on real data: 30Y extrapolation error 23.36 → 23.30 bp,
+and fits with all tenors quoted are bit-for-bit unchanged.
 
 NSS's extra parameters genuinely help **between** quoted maturities (10% lower
 out-of-sample error than Nelson–Siegel), and the smoothing penalty helps a
@@ -251,7 +277,7 @@ Treasury market** with known true parameters. It follows a dynamic NSS model wit
 a zero lower bound and realistic inversions. The tests and benchmarks can then
 check correctness, not just that the code runs.
 
-* **163 tests, 96% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
+* **169 tests, 96% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
 * **Math identities**: the forward curve integrates back to the zero curve, par
   bonds price at exactly 100, key-rate durations sum to duration, and the level
   factor duration equals duration.
@@ -330,7 +356,7 @@ src/nss_engine/
   validation.py    comparison with a reference curve (the Fed's GSW curve)
   pipeline.py      end-to-end run and exports
   report.py, viz.py, cli.py
-tests/             163 tests (incl. a real market curve)
+tests/             169 tests (incl. a real market curve)
 benchmarks/        v0 / 1.x / 2.0 comparison, regularization tuning, real-data studies
 docs/              methodology and references
 ```
@@ -355,7 +381,8 @@ This project started as a sophomore-year script: a Nelson–Siegel fit to FRED d
 with a 3-D Plotly surface. Version 1.0 rebuilt it from the ground up. Version
 2.0 fits the quotes as what they are (par yields), checks the result against the
 Federal Reserve's curve, and adds robust fitting, uncertainty, a state-space
-model and real-time recession tests. The [CHANGELOG](CHANGELOG.md) lists what
+model and real-time recession tests. Version 2.1 puts error bars on the
+headline comparisons and walks back a claim they did not support. The [CHANGELOG](CHANGELOG.md) lists what
 was wrong in each version and how it was fixed.
 
 ## References

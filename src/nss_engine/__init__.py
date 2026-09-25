@@ -20,7 +20,7 @@ from .pipeline import PipelineConfig, PipelineResult, run_pipeline, write_output
 from .statespace import DNSResult, fit_dns
 from .validation import ReferenceComparison, compare_to_reference
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 __all__ = [
     "DIEBOLD_LI_LAMBDA",

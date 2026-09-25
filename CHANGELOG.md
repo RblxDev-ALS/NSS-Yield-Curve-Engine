@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.1.0 — honest error bars, forecast combination, long-end guard
+
+### Changed (affects results)
+* **The second NSS hump stays inside the data** (`hump_within_data=True`). The
+  lower bound on λ2 becomes 1.7933/τmax for the longest *observed* maturity τmax,
+  so the hump cannot peak where the curve is only extrapolating. With every
+  tenor quoted this is the old bound and fits are bit-for-bit unchanged. On FRED
+  data the 30Y leave-one-out error moves from 23.36 to 23.30 bp: correct in
+  principle, negligible in practice.
+
+### Added
+* **Confidence interval on the recession-signal comparison.** Each signal's
+  out-of-sample AUC gain over 10y−3m gets a 90% moving-block bootstrap
+  interval (`regime.block_bootstrap_auc_difference`). On FRED data the
+  near-term forward spread's +0.099 gain has the interval [−0.035, +0.205],
+  so 2.0's "clearly better" was overstated; the README now says so.
+* **Equal-weight forecast combination** (½ model + ½ random walk), scored in
+  both forecast evaluations (`relative_rmse_combination`). On FRED data it
+  gives the project's first ratios below 1 (0.990 at 6 months, 0.996 at 12 for
+  the state-space model): a tie with the random walk, not a significant win.
+* `ReferenceComparison.subset()`; real-data studies report the fixed-bound
+  variant and the months without a 30-year quote.
+
+### Fixed
+* A docstring pointed to a benchmark file that does not exist.
+
 ## 2.0.0 — par-yield fitting, validation against the Fed, state-space model
 
 ### Changed (affects results)
