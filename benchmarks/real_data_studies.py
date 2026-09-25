@@ -115,6 +115,10 @@ def main() -> None:
             CalibrationConfig(lambda_smoothing=DEFAULT_PANEL_SMOOTHING),
             True,
         ),
+        "NSS + λ smoothing, fixed λ2 bound (2.0)": (
+            CalibrationConfig(lambda_smoothing=DEFAULT_PANEL_SMOOTHING, hump_within_data=False),
+            True,
+        ),
         "NSS + λ smoothing, zero target": (
             CalibrationConfig(target="yield", lambda_smoothing=DEFAULT_PANEL_SMOOTHING),
             True,
@@ -194,13 +198,22 @@ def gsw_study(monthly: pd.DataFrame, reference: pd.DataFrame, source: str) -> No
         "par target + robust": CalibrationConfig(
             lambda_smoothing=DEFAULT_PANEL_SMOOTHING, robust=True
         ),
+        "par target, fixed λ2 bound (2.0)": CalibrationConfig(
+            lambda_smoothing=DEFAULT_PANEL_SMOOTHING, hump_within_data=False
+        ),
     }
-    rows, bias_rows = {}, {}
+    # Months without a 30-year quote (the Treasury suspended the bond 2002-2006):
+    # the fitted long end is an extrapolation from the 20-year.
+    no_long = monthly.index[monthly[monthly.columns.max()].isna()]
+    rows, bias_rows, gap_rows = {}, {}, {}
     for label, cfg in configs.items():
         fit = calibrate_panel(monthly, cfg)
         cmp = compare_to_reference(fit, ref)
         rows[label] = cmp.overall()
         bias_rows[label] = cmp.summary()["bias_bp"]
+        gap = cmp.subset(no_long)
+        if gap.n_dates:
+            gap_rows[label] = gap.summary()["rmse_bp"]
     print(f"\n## Zero curves vs {name}, 1Y-30Y ({int(rows[label]['n_dates'])} month-ends)\n")
     print(
         "RMSE includes any constant offset; 'demeaned' removes each maturity's average gap; "
@@ -209,6 +222,10 @@ def gsw_study(monthly: pd.DataFrame, reference: pd.DataFrame, source: str) -> No
     print(pd.DataFrame(rows).T.drop(columns="n_dates").round(3).to_markdown())
     print("\nAverage gap (engine − reference, bp) by maturity:\n")
     print(pd.DataFrame(bias_rows).T.round(1).to_markdown())
+    if gap_rows:
+        n = len(ref.index.intersection(no_long))
+        print(f"\nRMSE (bp) in the {n} months without a 30-year quote:\n")
+        print(pd.DataFrame(gap_rows).T.round(1).to_markdown())
 
 
 if __name__ == "__main__":

@@ -30,7 +30,9 @@ Identification
 * ``λ1 ≥ min_lambda_ratio · λ2`` keeps the two curvature humps apart, removing
   the collinearity (and the label-switching between ``β2`` and ``β3``).
 * Bounds on the ``λ`` place the curvature humps inside the observed maturity
-  range, so ``β0`` keeps its meaning as the long-run level.
+  range, so ``β0`` keeps its meaning as the long-run level. The lower bound on
+  ``λ2`` follows the data (``hump_within_data``): when the longest quotes are
+  missing, the second hump may not peak beyond the longest one observed.
 * A small ridge penalty on ``β2, β3`` regularises the remaining
   ill-conditioning without visibly biasing the fit.
 * Across dates, an optional penalty on ``Δ log λ`` (``lambda_smoothing``)
@@ -87,7 +89,7 @@ class CalibrationConfig:
         zero curve directly to the quotes (the Diebold & Li 2006 shortcut). On
         par-quoted data the in-sample fit of both is identical, but the ``"yield"``
         zero curve is biased: ~3× further from the true curve on a simulated
-        market, −5 bp at 30 years (``benchmarks/par_vs_zero.py``). Use ``"yield"``
+        market, −5 bp at 30 years (``benchmarks/compare_legacy.py``). Use ``"yield"``
         for data that really are zero rates (e.g. the Fed's GSW curve).
     lambda1_bounds, lambda2_bounds:
         Box constraints on the decay rates (1/years). The defaults put the first
@@ -124,6 +126,13 @@ class CalibrationConfig:
     robust_scale_floor_bp:
         Lower bound on the robust residual scale, so a near-perfect fit does
         not flag sub-basis-point deviations.
+    hump_within_data:
+        Raise the lower bound on ``λ2`` so that the second curvature hump peaks
+        no later than the longest *observed* maturity
+        (``λ2 ≥ 1.793 / τ_max``). With all CMT tenors quoted (``τ_max = 30``)
+        this is the default bound and changes nothing. When the long end is
+        missing - the 30-year bond was not issued from 2002 to 2006 - it stops
+        an unanchored hump from bending the extrapolated long end.
     """
 
     model: Model = "nss"
@@ -142,6 +151,7 @@ class CalibrationConfig:
     robust: bool = False
     huber_k: float = 3.0
     robust_scale_floor_bp: float = 2.0
+    hump_within_data: bool = True
 
     def __post_init__(self) -> None:
         if self.model not in ("ns", "nss"):
@@ -556,6 +566,8 @@ def calibrate(
     model: str = cfg.model
     if model == "nss" and tau.size < cfg.min_points_nss:
         model = "ns"
+    if model == "nss" and cfg.hump_within_data:
+        cfg = _hump_bounds(cfg, float(tau.max()))
 
     target = cfg.target
     active = _active_params(cfg, model)
@@ -635,6 +647,20 @@ def calibrate(
 
 
 _ROBUST_MAX_ITER = 8
+
+# The curvature loading (1 - e^-x)/x - e^-x peaks at x = λτ ≈ 1.7933.
+HUMP_PEAK = 1.7932821325977144
+
+
+def _hump_bounds(cfg: CalibrationConfig, tau_max: float) -> CalibrationConfig:
+    """Tighten the ``λ2`` lower bound so the second hump peaks within the data."""
+    lo, hi = cfg.lambda2_bounds
+    # Stay feasible: below the upper bound and the ratio constraint's ceiling.
+    ceiling = min(hi, cfg.lambda1_bounds[1] / cfg.min_lambda_ratio)
+    new_lo = min(max(lo, HUMP_PEAK / tau_max), 0.5 * ceiling)
+    if new_lo <= lo:
+        return cfg
+    return replace(cfg, lambda2_bounds=(new_lo, hi))
 
 
 def _active_params(cfg: CalibrationConfig, model: str) -> tuple[bool, ...]:
