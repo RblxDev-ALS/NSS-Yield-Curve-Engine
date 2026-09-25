@@ -22,7 +22,10 @@
   refines every basin of a grid search run on convexity-adjusted quotes, and
   matches a brute-force reference.
 * When the par optimum pushed λ1 outside its bounds, the par fit was discarded
-  and reported as failed. λ1 is now fixed at the active bound and the rest re-solved.
+  and reported as failed. λ1 is now fixed at the active bound and the rest
+  re-solved. On FRED data the success rate rose from 93.9% to 100%.
+* The state-space MLE could drive a maturity's measurement noise to zero (seen
+  for the 3Y and 6M). The noise now has a 1 bp floor.
 
 ### Added
 * Analytic Jacobian for par fitting and de-duplicated coupon dates: ~20 ms per

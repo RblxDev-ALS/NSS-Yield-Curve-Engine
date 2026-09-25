@@ -197,6 +197,12 @@ def _pack_size(n: int, dynamics: str, fixed_lambda: bool) -> int:
     return (0 if fixed_lambda else 1) + 3 + n_a + 6 + n
 
 
+#: Lower bound on the measurement noise (percent, i.e. 1 bp). Without it the MLE
+#: can drive one maturity's noise to zero - a degenerate optimum in which the
+#: filter treats that yield as exact (seen on FRED data for the 3Y and 6M).
+_H_FLOOR = 0.01
+
+
 class _Transform:
     """Maps an unconstrained vector θ to model parameters."""
 
@@ -229,7 +235,7 @@ class _Transform:
         chol[np.diag_indices(3)] = np.exp(chol[np.diag_indices(3)])
         i += 6
         Q = chol @ chol.T
-        h = np.exp(theta[i : i + self.n])
+        h = _H_FLOOR + np.exp(theta[i : i + self.n])
         return DNSParameters(lam, mu, A, Q, h)
 
     def pack(self, p: DNSParameters) -> FloatArray:
@@ -241,7 +247,7 @@ class _Transform:
         diag_pos = [0, 2, 5]  # positions of the diagonal in tril order
         low[diag_pos] = np.log(np.diag(chol))
         parts.append(low)
-        parts.append(np.log(p.h))
+        parts.append(np.log(np.maximum(p.h - _H_FLOOR, 1e-6)))
         return np.concatenate(parts)
 
 

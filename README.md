@@ -25,30 +25,99 @@ From the latest run of the [live workflow](https://github.com/RblxDev-ALS/NSS-Yi
 
 | | |
 |---|---|
-| Median fit error | **3.4 bp** (95th percentile 7.3 bp), 100% of fits converged |
-| Calibration speed | ~12 ms per curve, so 36 years of weekly curves take about 35 s |
+| Median fit error | **3.8 bp** (95th percentile 8.0 bp), 100% of fits converged |
+| Agreement with the **Federal Reserve's own curve** (1–30Y zero rates) | RMSE **10.0 bp** with par fitting vs 16.3 bp reading quotes as zero rates. Weekly changes correlate 0.97 |
+| Calibration speed | ~26 ms per curve (par fit), so 36 years of weekly curves take about 70 s |
 | Model-implied vs observed 10Y−3M spread | correlation **0.999**, mean absolute gap 5 bp |
-| Inversions detected (≥ 3 months, 10Y−3M) | 2000, 2006, 2019: each followed by a recession after **8, 17 and 10 months**. 2022–24: the deepest inversion in the sample (−1.8 pp, 25 months), with no recession so far |
-| Recession probit (12 months ahead) | $\Phi(-1.05 - 0.39\cdot\text{spread})$, AUC 0.78 |
-| Diebold–Li forecasts vs random walk | the random walk **wins** at 1, 6 and 12 months (RMSE ratios 1.04–1.24) |
+| Inversions detected (≥ 3 months, 10Y−3M) | 2000, 2006, 2019: each followed by a recession after **8, 18 and 10 months**. 2022–24: the deepest inversion in the sample (−1.8 pp, 25 months), with no recession so far |
+| Recession prediction, **pseudo-real time** | out-of-sample AUC **0.71** for the near-term forward spread vs 0.61 for 10Y−3M (both 0.78 in sample) |
+| Forecasts vs random walk | the random walk **wins** for every model at 1, 6 and 12 months (RMSE ratios 1.02–1.24) |
 
-Two of these results are negative, and they are reported as such. Diebold & Li's
-model beat "no change" at 12-month horizons in their original 1985–2000 sample,
-but not since. A model that mean-reverts to a historical average struggles
-through decades of falling rates and the zero lower bound, and the random walk
-is famously hard to beat in yield forecasting (Duffee, 2002). And the
-**2022–24 inversion** is the yield-curve recession signal's famous false alarm
-(so far), which weakens the probit's fit.
+### The biggest fix in 2.0: the quotes are par yields
 
-A third finding shaped the design. Raw NSS betas are *not* clean economic
-factors. With the decay rates free, −β1 is a zero-to-infinity spread and
-correlates only 0.72 with the observed 10Y−3M. Fixed-λ Diebold–Li factors
-correlate 0.995. So the regime engine reads the slope off the fitted curve
-(0.999) instead of using −β1 as a stand-in for the 10Y−2Y spread.
+FRED's constant-maturity yields are **semi-annual par yields**. Version 1.x, like
+Diebold & Li's classic setup, fitted the continuously compounded *zero* curve
+straight to them. The in-sample fit cannot reveal the error: both fits match the
+quotes equally well. The zero curve that comes out is still wrong. Checked
+against the Federal Reserve's independently estimated Svensson curve
+(Gürkaynak, Sack & Wright; off-the-run bonds, a different method), over 440
+month-ends since 1990:
 
-The fit residuals also pick up a real market anomaly. Since it was reintroduced
-in 2020, the **20-year bond** has traded cheap relative to its neighbours (+9 bp
-above the fitted curve in the latest run).
+| reading of the quotes | RMSE vs the Fed | after removing each maturity's average gap | average gap at 20Y | 5y5y forward gap |
+|---|---:|---:|---:|---:|
+| as zero rates (1.x) | 16.3 bp | 12.0 bp | −18.5 bp | −21.8 bp |
+| **as par yields (2.0 default)** | **10.0 bp** | **7.8 bp** | −9.7 bp | −14.5 bp |
+| as par yields, robust fit | 11.0 bp | 8.7 bp | −10.8 bp | −15.1 bp |
+
+The par fit is **38% closer** to the Fed's curve. The same correction on a
+simulated market with a known truth cuts the error 59% (table below). What
+remains is mostly a stable offset that is expected: the engine fits
+**on-the-run** issues, which trade rich, while the Fed deliberately excludes
+them.
+
+The third row is a negative result. Robust fitting (Huber/bisquare
+reweighting) works on simulated bad quotes, where it cuts the error from 11.5 to
+3.1 bp. On real data it mostly rejects the **20-year bond** (13.6% of weeks) and
+the on-the-run 10-year (4.7%). Those are persistent market features, not errors,
+and ignoring them moves the curve *away* from the Fed's. So it is opt-in
+(`--robust`).
+
+### Recessions: a better signal, and an honest test
+
+Every U.S. recession since the late 1960s was preceded by an inverted curve.
+In-sample, the 10Y−3M probit has an AUC of 0.78. That flatters it: the model is
+fitted on the same recessions it is scored on. The engine also runs a
+**pseudo-real-time** test. Each month it re-estimates the probit using only
+recessions already known, then scores the forecast it would have made (297
+forecast months):
+
+| signal | AUC in sample | AUC out of sample | log score (higher = better) | Brier |
+|---|---:|---:|---:|---:|
+| 10Y−3M spread (NY Fed) | 0.779 | 0.613 | −0.395 | 0.088 |
+| **near-term forward spread** | 0.774 | **0.712** | **−0.302** | 0.091 |
+| both | 0.786 | 0.503 | −0.543 | 0.103 |
+
+The **near-term forward spread** (Engstrom & Sharpe, 2019) is read straight off
+the NSS forward curve: the 3-month rate expected 18 months ahead minus today's.
+It measures whether markets expect the Fed to *cut*, and out of sample it ranks
+recession risk clearly better than the classic spread. Putting both signals in
+one model looks best in sample and is the **worst** out of sample. With four
+recessions since 1990 there is too little data for two slopes.
+
+### Forecasting: the random walk still wins
+
+Diebold & Li's model beat "no change" at 12-month horizons in their original
+1985–2000 sample, but not since. A model that mean-reverts to a historical
+average struggles through decades of falling rates and the zero lower bound. The
+random walk is famously hard to beat (Duffee, 2002). 2.0 adds the **state-space
+version** (Kalman filter, all parameters estimated jointly by maximum
+likelihood; Diebold, Rudebusch & Aruoba, 2006). It improves on the two-step AR
+model but still loses to no-change:
+
+| model (re-estimated on past data only) | 1 month | 6 months | 12 months | 80% interval coverage (1 / 6 / 12m) |
+|---|---:|---:|---:|---:|
+| Diebold–Li, AR(1) factors | 1.112 | 1.072 | 1.090 | – |
+| Diebold–Li, VAR(1) factors | 1.089 | **1.018** | **1.028** | – |
+| state-space, VAR(1) | **1.087** | 1.033 | 1.063 | 86% / 79% / 73% |
+| state-space, random-walk level | 1.103 | 1.061 | 1.074 | 85% / 79% / 77% |
+
+(RMSE relative to the random walk, averaged over tenors; < 1 would beat it.)
+The state-space intervals are well calibrated at short horizons and somewhat
+too narrow at 12 months, because they ignore parameter uncertainty.
+
+### Other findings
+
+* **Raw NSS betas are not clean economic factors.** With the decay rates free,
+  −β1 is a zero-to-infinity spread and correlates only 0.74 with the observed
+  10Y−3M. Fixed-λ Diebold–Li factors correlate 0.995. So the regime engine reads
+  the slope off the fitted curve (0.999) instead of using −β1.
+* **The 20-year bond anomaly.** Since it was reintroduced in 2020, the 20-year
+  has traded cheap relative to its neighbours (+9 bp above the fitted curve in
+  the latest run).
+* **Parameter uncertainty vs curve uncertainty.** Individual NSS betas have huge,
+  strongly correlated standard errors. The fitted zero curve is pinned down to
+  about ±10 bp (95%) at 2–10 years, and the band widens to ±22 bp at 30 years,
+  where only one quote anchors it.
 
 ### Does NSS overfit? Leave-one-tenor-out cross-validation
 
@@ -59,19 +128,17 @@ This uses 441 month-end curves from 1990 to 2026
 
 | model | out-of-sample RMSE, 3M–20Y (interpolation) | 30Y (extrapolation) |
 |---|---:|---:|
-| Nelson–Siegel (4 parameters) | 9.29 bp | **19.1 bp** |
-| NSS, each date fitted independently | 8.53 bp | 29.1 bp |
-| **NSS + λ smoothing (default)** | **8.31 bp** | 29.2 bp |
+| Nelson–Siegel (4 parameters) | 9.31 bp | **17.2 bp** |
+| NSS, each date fitted independently | 8.69 bp | 23.9 bp |
+| **NSS + λ smoothing (default)** | **8.34 bp** | 23.4 bp |
+| NSS + λ smoothing, zero target (1.x) | 8.31 bp | 29.2 bp |
 
-NSS's extra parameters genuinely help **between** quoted maturities (11% lower
+NSS's extra parameters genuinely help **between** quoted maturities (10% lower
 out-of-sample error than Nelson–Siegel), and the smoothing penalty helps a
 little more. **Beyond** the last quote the extra flexibility hurts: with the 30Y
-hidden, NSS bends the long end more than the data supports. So for
-extrapolation, the simpler model is safer.
-
-The same script compares forecast designs. AR(1) vs VAR(1) factor dynamics, and
-expanding vs rolling 10-year windows, all still lose to the random walk (RMSE
-ratios 1.02–1.16). VAR(1) on an expanding window comes closest.
+hidden, NSS bends the long end more than the data supports, so for
+extrapolation the simpler model is safer. Par fitting cuts that 30Y
+extrapolation error from 29.2 to 23.4 bp.
 
 To reproduce: `nss-engine run --source fred --start 1990-01-01` and
 `python benchmarks/real_data_studies.py`.
