@@ -4,6 +4,7 @@ import pytest
 from scipy.stats import norm
 
 from nss_engine import regime
+from nss_engine.models import PARAM_NAMES
 
 
 def _series(values, freq="W-FRI"):
@@ -123,3 +124,94 @@ def test_recession_model_on_synthetic(long_market):
     assert m.auc > 0.8
     assert 0 <= m.latest_probability <= 1
     assert m.target_date > m.latest_date
+
+
+class TestNearTermForwardSpread:
+    def test_matches_forward_rate(self, humped_curve, inverted_curve):
+        params = pd.DataFrame(
+            [humped_curve.as_array(), inverted_curve.as_array()],
+            index=pd.to_datetime(["2020-01-31", "2023-06-30"]),
+            columns=list(PARAM_NAMES),
+        )
+        ntfs = regime.near_term_forward_spread(params)
+        for curve, value in zip((humped_curve, inverted_curve), ntfs, strict=True):
+            expected = curve.forward_rate(1.5, 1.75)[0] - curve.zero(0.25)[0]
+            assert value == pytest.approx(expected)
+        assert ntfs.iloc[0] > 0 > ntfs.iloc[1]  # hikes priced vs cuts priced
+
+    def test_flat_curve_is_zero(self):
+        flat = pd.DataFrame(
+            [[4.0, 0.0, 0.0, 0.0, 0.7, 0.2]],
+            index=[pd.Timestamp("2024-01-31")],
+            columns=list(PARAM_NAMES),
+        )
+        assert regime.near_term_forward_spread(flat).iloc[0] == pytest.approx(0.0, abs=1e-12)
+
+
+class TestRealTimeRecessionModel:
+    @pytest.fixture
+    def data(self, long_market):
+        mats = np.asarray(long_market.yields.columns, dtype=float)
+        y = long_market.yields
+        spread = y[mats[np.argmin(abs(mats - 10))]] - y[mats[np.argmin(abs(mats - 0.25))]]
+        return spread, long_market.recession
+
+    def test_no_look_ahead(self, data):
+        spread, rec = data
+        base = regime.real_time_evaluation(spread, rec, horizon=12, min_train_months=60)
+        origin = base.probabilities.index[len(base.probabilities) // 2]
+        # Scramble every outcome that was not yet known at `origin`.
+        scrambled = rec.copy()
+        unknown = scrambled.index > origin
+        scrambled[unknown] = 1 - scrambled[unknown]
+        alt = regime.real_time_evaluation(spread, scrambled, horizon=12, min_train_months=60)
+        assert alt.probabilities[origin] == pytest.approx(base.probabilities[origin])
+
+    def test_publication_lag_uses_less_data(self, data):
+        spread, rec = data
+        fast = regime.real_time_evaluation(spread, rec, min_train_months=60)
+        slow = regime.real_time_evaluation(spread, rec, min_train_months=60, publication_lag=12)
+        assert slow.probabilities.index[0] > fast.probabilities.index[0]
+
+    def test_scores(self, data):
+        spread, rec = data
+        ev = regime.real_time_evaluation(spread, rec, min_train_months=60)
+        p, y = ev.probabilities.to_numpy(), ev.outcomes.to_numpy()
+        assert np.all((p > 0) & (p < 1))  # the ridge prior prevents 0/1 forecasts
+        assert ev.brier == pytest.approx(np.mean((p - y) ** 2))
+        assert ev.log_score == pytest.approx(np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
+        assert ev.auc == pytest.approx(regime.roc_auc(p, y))
+
+    def test_ridge_prior_tames_separation(self):
+        x = np.array([-2.0, -1.5, -1.0, 1.0, 1.5, 2.0])
+        y = np.array([1, 1, 1, 0, 0, 0])  # perfectly separable
+        loose = regime.fit_probit(x, y)
+        tight = regime.fit_probit(x, y, l2=1.0)
+        assert abs(loose.coef[1]) > 3 * abs(tight.coef[1])
+        assert 0.5 < tight.predict([-1.0])[0] < 0.99
+
+    def test_compare_predictors(self, data):
+        spread, rec = data
+        noise = pd.Series(
+            np.random.default_rng(0).normal(size=len(spread)), index=spread.index, name="noise"
+        )
+        table = regime.compare_recession_predictors(
+            {"spread": spread, "noise": noise, "both": pd.concat([spread, noise], axis=1)},
+            rec,
+            min_train_months=60,
+        )
+        assert table.loc["spread", "auc_out_of_sample"] > table.loc["noise", "auc_out_of_sample"]
+        assert len(set(table["n_forecasts"])) == 1  # scored on common origins
+        assert table.loc["both", "pseudo_r2"] >= table.loc["spread", "pseudo_r2"] - 1e-9
+
+    def test_multi_predictor_names(self, data):
+        spread, rec = data
+        X = pd.concat({"a": spread, "b": spread**2}, axis=1)
+        m = regime.recession_probability_model(X, rec)
+        assert m.model.names == ("const", "a", "b")
+        assert m.model.coef.size == 3
+
+    def test_too_little_history(self, data):
+        spread, rec = data
+        with pytest.raises(ValueError):
+            regime.real_time_evaluation(spread, rec, min_train_months=10_000)

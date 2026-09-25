@@ -12,7 +12,13 @@ inversion of the 10-year / 3-month spread. This module turns a slope series
   the curve is moving;
 * **inversion episodes** and their lead times to NBER recessions;
 * a **probit recession-probability model** ``P(recession in 12m) = Φ(a + b·spread)``,
-  the specification used by the Federal Reserve Bank of New York.
+  the specification used by the Federal Reserve Bank of New York, optionally
+  with several predictors;
+* the **near-term forward spread** of Engstrom & Sharpe (2019), read straight
+  off the fitted forward curve;
+* a **pseudo-real-time evaluation** that re-estimates each probit every month
+  using only outcomes known at the time, and scores the forecasts it would
+  actually have produced.
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ import pandas as pd
 from numpy.typing import ArrayLike
 from scipy.stats import norm
 
-from .models import FloatArray
+from .models import FloatArray, nss_loadings
 
 REGIMES = ("Inverted", "Flat", "Normal", "Steep")
 #: Default regime boundaries on the spread, in percentage points.
@@ -226,11 +232,17 @@ def _design(x: ArrayLike) -> FloatArray:
     return np.column_stack([np.ones(X.shape[0]), X])
 
 
-def fit_probit(x: ArrayLike, y: ArrayLike, max_iter: int = 100, tol: float = 1e-10) -> ProbitModel:
+def fit_probit(
+    x: ArrayLike, y: ArrayLike, max_iter: int = 100, tol: float = 1e-10, l2: float = 0.0
+) -> ProbitModel:
     """Maximum-likelihood probit via Newton-Raphson with analytic derivatives.
 
     The probit log-likelihood is globally concave, so Newton's method with step
-    halving converges from zero. Standard errors come from the inverse observed
+    halving converges from zero. ``l2 > 0`` adds a Gaussian prior
+    ``−½·l2·Σ b_j²`` on the slope coefficients (not the intercept): when the
+    classes are perfectly separable - common with only one or two recessions
+    in a short sample - the unpenalised MLE diverges and forecasts become
+    exactly 0 or 1. Standard errors come from the inverse observed
     information. (With overlapping monthly forecast horizons the errors are
     serially correlated, so these standard errors are optimistic; they are
     reported for reference, not formal inference.)
@@ -243,8 +255,11 @@ def fit_probit(x: ArrayLike, y: ArrayLike, max_iter: int = 100, tol: float = 1e-
         raise ValueError("y must be binary 0/1")
     q = 2.0 * yv - 1.0
 
+    prior = np.full(X.shape[1], l2)
+    prior[0] = 0.0
+
     def loglik(b: FloatArray) -> float:
-        return float(norm.logcdf(q * (X @ b)).sum())
+        return float(norm.logcdf(q * (X @ b)).sum() - 0.5 * np.sum(prior * b**2))
 
     beta = np.zeros(X.shape[1])
     ll = loglik(beta)
@@ -252,8 +267,8 @@ def fit_probit(x: ArrayLike, y: ArrayLike, max_iter: int = 100, tol: float = 1e-
         xb = X @ beta
         # λ_i = q φ(q xb) / Φ(q xb), computed in log space for stability
         lam = q * np.exp(norm.logpdf(q * xb) - norm.logcdf(q * xb))
-        grad = X.T @ lam
-        hess = -(X * (lam * (lam + xb))[:, None]).T @ X
+        grad = X.T @ lam - prior * beta
+        hess = -(X * (lam * (lam + xb))[:, None]).T @ X - np.diag(prior)
         step = np.linalg.solve(hess, grad)
         t = 1.0
         while t > 1e-8:
@@ -268,7 +283,7 @@ def fit_probit(x: ArrayLike, y: ArrayLike, max_iter: int = 100, tol: float = 1e-
             break
     xb = X @ beta
     lam = q * np.exp(norm.logpdf(q * xb) - norm.logcdf(q * xb))
-    info = (X * (lam * (lam + xb))[:, None]).T @ X
+    info = (X * (lam * (lam + xb))[:, None]).T @ X + np.diag(prior)
     stderr = np.sqrt(np.diag(np.linalg.pinv(info)))
     p_bar = float(np.clip(yv.mean(), 1e-12, 1 - 1e-12))
     ll_null = float(yv.size * (p_bar * np.log(p_bar) + (1 - p_bar) * np.log(1 - p_bar)))
@@ -288,12 +303,12 @@ def roc_auc(scores: ArrayLike, labels: ArrayLike) -> float:
 
 @dataclass(frozen=True)
 class RecessionModel:
-    """Probit of 'recession ``horizon`` months ahead' on the monthly spread."""
+    """Probit of 'recession ``horizon`` months ahead' on monthly predictors."""
 
     model: ProbitModel
     horizon: int
     fitted: pd.Series  #: in-sample probability, indexed by the *forecast origin* month
-    latest_probability: float  #: probability implied by the latest spread
+    latest_probability: float  #: probability implied by the latest predictors
     latest_date: pd.Timestamp
     auc: float
 
@@ -302,29 +317,177 @@ class RecessionModel:
         return self.latest_date + pd.offsets.MonthEnd(self.horizon)
 
 
-def recession_probability_model(
-    spread: pd.Series, recession: pd.Series, horizon: int = 12
-) -> RecessionModel:
-    """Estimate ``P(recession in month t+h) = Φ(a + b·spread_t)`` (NY Fed specification).
+def _monthly_predictors(predictors: pd.Series | pd.DataFrame) -> pd.DataFrame:
+    frame = predictors.to_frame("spread") if isinstance(predictors, pd.Series) else predictors
+    return frame.resample("ME").mean().dropna()
 
-    ``spread`` may be weekly or daily; it is averaged to months. ``recession``
-    is a monthly 0/1 NBER indicator.
-    """
-    s = to_monthly(spread, "mean")
+
+def _monthly_target(recession: pd.Series, horizon: int) -> pd.Series:
     rec = recession.copy()
     rec.index = rec.index.to_period("M").to_timestamp("M")
-    target = rec.shift(-horizon)
-    df = pd.concat({"spread": s, "target": target}, axis=1).dropna()
+    return rec.shift(-horizon).rename("target")
+
+
+def recession_probability_model(
+    predictors: pd.Series | pd.DataFrame, recession: pd.Series, horizon: int = 12
+) -> RecessionModel:
+    """Estimate ``P(recession in month t+h) = Φ(a + b·x_t)`` (NY Fed specification).
+
+    ``predictors`` is one series (e.g. the 10y−3m spread) or a frame of several;
+    weekly or daily values are averaged to months. ``recession`` is a monthly
+    0/1 NBER indicator.
+    """
+    X = _monthly_predictors(predictors)
+    df = X.join(_monthly_target(recession, horizon), how="inner").dropna()
     if df["target"].nunique() < 2:
         raise ValueError("need both recession and non-recession months to fit the model")
-    model = fit_probit(df["spread"].to_numpy(), df["target"].to_numpy())
-    fitted_all = pd.Series(model.predict(s.to_numpy()), index=s.index, name="recession_probability")
-    auc = roc_auc(model.predict(df["spread"].to_numpy()), df["target"].to_numpy())
+    cols = list(X.columns)
+    model = fit_probit(df[cols].to_numpy(), df["target"].to_numpy())
+    model = ProbitModel(
+        model.coef, model.stderr, model.loglik, model.loglik_null, model.n_obs, ("const", *cols)
+    )
+    fitted_all = pd.Series(model.predict(X.to_numpy()), index=X.index, name="recession_probability")
+    auc = roc_auc(model.predict(df[cols].to_numpy()), df["target"].to_numpy())
     return RecessionModel(
         model=model,
         horizon=horizon,
         fitted=fitted_all,
         latest_probability=float(fitted_all.iloc[-1]),
-        latest_date=pd.Timestamp(s.index[-1]),
+        latest_date=pd.Timestamp(X.index[-1]),
         auc=auc,
     )
+
+
+# =============================================================================
+# Near-term forward spread and real-time evaluation
+# =============================================================================
+
+
+def near_term_forward_spread(
+    params: pd.DataFrame, ahead: float = 1.5, tenor: float = 0.25
+) -> pd.Series:
+    """Engstrom & Sharpe (2019) near-term forward spread, in percentage points.
+
+    The forward rate on a ``tenor``-year bill starting ``ahead`` years from now
+    (6 quarters by default) minus today's ``tenor``-year rate, both from the
+    fitted zero curve. It isolates what the market expects monetary policy to
+    do over the next year and a half: a negative value means rate *cuts* are
+    priced in, which historically precedes recessions. Engstrom & Sharpe show
+    it dominates long-term spreads such as 10y−3m as a recession predictor.
+    """
+    tau = np.array([tenor, ahead, ahead + tenor])
+    z = np.array(
+        [
+            nss_loadings(tau, r.lambda1, r.lambda2) @ np.array([r.beta0, r.beta1, r.beta2, r.beta3])
+            for r in params.itertuples()
+        ]
+    )
+    fwd = (z[:, 2] * tau[2] - z[:, 1] * tau[1]) / tenor
+    return pd.Series(fwd - z[:, 0], index=params.index, name="near_term_forward_spread")
+
+
+@dataclass(frozen=True)
+class RealTimeEvaluation:
+    """Pseudo-out-of-sample recession forecasts from an expanding-window probit."""
+
+    probabilities: pd.Series  #: forecast made at each origin month
+    outcomes: pd.Series  #: realised 0/1 recession ``horizon`` months later
+    horizon: int
+
+    @property
+    def auc(self) -> float:
+        return roc_auc(self.probabilities.to_numpy(), self.outcomes.to_numpy())
+
+    @property
+    def brier(self) -> float:
+        """Mean squared error of the probabilities (lower is better)."""
+        return float(np.mean((self.probabilities - self.outcomes) ** 2))
+
+    @property
+    def log_score(self) -> float:
+        """Average predictive log-likelihood (higher is better)."""
+        p = np.clip(self.probabilities.to_numpy(), 1e-6, 1 - 1e-6)
+        y = self.outcomes.to_numpy()
+        return float(np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
+
+
+def real_time_evaluation(
+    predictors: pd.Series | pd.DataFrame,
+    recession: pd.Series,
+    horizon: int = 12,
+    min_train_months: int = 120,
+    publication_lag: int = 0,
+    l2: float = 1.0,
+) -> RealTimeEvaluation:
+    """Re-estimate the probit every month on information available at the time.
+
+    At origin month ``t`` the model is fitted on origins ``s ≤ t − horizon −
+    publication_lag``, whose outcomes (recession or not at ``s + horizon``)
+    were known by ``t``; its forecast for ``t + horizon`` is recorded. NBER
+    announces turning points with a lag of months to a year, so setting
+    ``publication_lag`` (e.g. 12) gives a stricter, more realistic test. No
+    information from after ``t`` enters any forecast. Early windows often
+    contain a single recession, so the probit is fitted with a weak ridge
+    prior ``l2`` (see :func:`fit_probit`).
+    """
+    X = _monthly_predictors(predictors)
+    target = _monthly_target(recession, horizon)
+    df = X.join(target, how="inner")
+    cols = list(X.columns)
+    known = df.dropna()
+    probs, outs = {}, {}
+    gap = horizon + publication_lag
+    for i in range(len(df)):
+        origin = df.index[i]
+        if not np.isfinite(df["target"].iloc[i]):
+            continue
+        cutoff = origin - pd.offsets.MonthEnd(gap)
+        train = known.loc[:cutoff]
+        if len(train) < min_train_months or train["target"].nunique() < 2:
+            continue
+        m = fit_probit(train[cols].to_numpy(), train["target"].to_numpy(), l2=l2)
+        probs[origin] = float(m.predict(df[cols].iloc[[i]].to_numpy())[0])
+        outs[origin] = float(df["target"].iloc[i])
+    if not probs:
+        raise ValueError("not enough history for a real-time evaluation")
+    return RealTimeEvaluation(
+        pd.Series(probs, name="probability"), pd.Series(outs, name="outcome"), horizon
+    )
+
+
+def compare_recession_predictors(
+    candidates: dict[str, pd.Series | pd.DataFrame],
+    recession: pd.Series,
+    horizon: int = 12,
+    min_train_months: int = 120,
+    publication_lag: int = 0,
+) -> pd.DataFrame:
+    """In-sample fit and pseudo-real-time accuracy of several probit specifications.
+
+    All models are scored on the same forecast origins, so their out-of-sample
+    numbers are comparable.
+    """
+    rows, evals = {}, {}
+    for name, x in candidates.items():
+        m = recession_probability_model(x, recession, horizon)
+        rows[name] = {
+            "pseudo_r2": m.model.pseudo_r2,
+            "auc_in_sample": m.auc,
+            "latest_probability": m.latest_probability,
+        }
+        evals[name] = real_time_evaluation(x, recession, horizon, min_train_months, publication_lag)
+    common = None
+    for ev in evals.values():
+        idx = ev.probabilities.index
+        common = idx if common is None else common.intersection(idx)
+    for name, ev in evals.items():
+        sub = RealTimeEvaluation(ev.probabilities.loc[common], ev.outcomes.loc[common], ev.horizon)
+        rows[name].update(
+            auc_out_of_sample=sub.auc,
+            brier_out_of_sample=sub.brier,
+            log_score_out_of_sample=sub.log_score,
+            n_forecasts=float(len(common)) if common is not None else 0.0,
+        )
+    out = pd.DataFrame(rows).T
+    out.index.name = "predictors"
+    return out

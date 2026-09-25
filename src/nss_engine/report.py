@@ -179,6 +179,39 @@ def render_markdown(r: PipelineResult) -> str:
             f"**Latest: {rm['latest_probability']:.1%}** probability of recession in {rm['target_month']}."
         )
         add("")
+    if r.recession_comparison is not None:
+        rc = r.recession_comparison.copy()
+        add("### Which curve signal predicts recessions? (pseudo-real time)")
+        add("")
+        add(
+            f"Each probit is re-estimated every month using only recessions known at the time and "
+            f"scored on the forecasts it would have made ({int(rc['n_forecasts'].iloc[0])} common "
+            "forecast months). The near-term forward spread (Engstrom & Sharpe, 2019) is the "
+            "3-month forward rate 18 months ahead minus today's 3-month rate, from the NSS "
+            "forward curve. Brier: lower is better; log score and AUC: higher is better."
+        )
+        add("")
+        add(
+            _table(
+                rc[
+                    [
+                        "auc_in_sample",
+                        "pseudo_r2",
+                        "auc_out_of_sample",
+                        "brier_out_of_sample",
+                        "log_score_out_of_sample",
+                        "latest_probability",
+                    ]
+                ],
+                ".3f",
+            )
+        )
+        add("")
+        add(
+            f"Latest near-term forward spread: **{r.spreads['near_term_fwd'].iloc[-1]:+.2f} pp** "
+            "(negative = rate cuts priced in)."
+        )
+        add("")
     if r.lead_times is not None and not r.lead_times.empty:
         lt = r.lead_times.copy()
         for c in ("start", "end", "recession_start", "date_of_min"):
