@@ -129,6 +129,14 @@ refines several distinct starts.
 * $\lambda_1 \in [0.15, 3]$ and $\lambda_2 \in [0.06, 1]$ place the humps between
   about 0.6 and 30 years, inside the observed maturity range. Without this, a
   hump beyond 30 years acts as an extra slope and $\beta_0$ loses its meaning as the long-run level.
+* The same logic applies when the long end is **missing**. The curvature loading
+  $\frac{1-e^{-x}}{x}-e^{-x}$ peaks at $x=\lambda\tau\approx1.7933$, so the lower
+  bound on $\lambda_2$ is raised to $1.7933/\tau_{\max}$, where $\tau_{\max}$ is the
+  longest *observed* maturity (`hump_within_data`). With the 30-year quoted this
+  is the fixed bound above and nothing changes. Without it (February 2002 to
+  February 2006, when the Treasury did not issue the 30-year bond, or when
+  cross-validation hides it) the second hump cannot peak in the region the curve
+  is extrapolating into.
 * The ridge penalty $\rho = 10^{-5}$ and the smoothing penalty $\kappa = 10^{-3}$
   were chosen by minimizing the error against the **true** curve on synthetic data
   (`benchmarks/tune_regularisation.py`). In-sample RMSE always prefers no
@@ -287,6 +295,13 @@ read off the fitted curve, so it is defined even when a tenor is missing.
   slope coefficients (ridge, $\ell_2 = 1$) keeps those forecasts inside (0, 1).
   The 10Y−3M spread, the near-term forward spread and both together are scored
   on the same forecast months.
+* **How sure is the ranking?** The out-of-sample window holds only a few
+  recessions, and neighbouring months are strongly dependent (recessions last
+  months, and 12-month-ahead targets overlap). The AUC gain of each signal over
+  the first is therefore given a 90% **moving-block bootstrap** interval
+  (Künsch, 1989): 24-month blocks of forecast months are resampled circularly,
+  both signals are scored on the same resample, and the 5th and 95th percentiles
+  of the AUC difference are reported.
 * **Lead times**: each sustained inversion (≥ 3 months) is matched to the next
   recession start within 36 months. Inversions with no recession within that window are counted as false alarms.
 
@@ -302,6 +317,11 @@ $\hat y_{t+h}(\tau) = X(\tau)\hat f_{t+h|t}$. The evaluation is strictly out of 
 * Differences are tested with the **Diebold–Mariano** test, using the
   Harvey–Leybourne–Newbold small-sample correction and $h-1$ autocovariance lags
   for $h$-step forecasts.
+* The **equal-weight combination** $\tfrac12\hat y^{\text{model}}_{t+h} + \tfrac12 y_t$
+  is scored too. Its weights are not estimated, so it cannot overfit, and its
+  error is the average of the two errors, so by Minkowski's inequality its RMSE
+  is never above the average of the two RMSEs. It beats both whenever their
+  errors are not too strongly correlated (Bates & Granger, 1969; Timmermann, 2006).
 
 ### 5.1 State-space dynamic Nelson–Siegel
 
@@ -368,6 +388,7 @@ are too narrow.
 
 ## References
 
+* Bates, J. & Granger, C. (1969). The combination of forecasts. *Operational Research Quarterly*.
 * Beaton, A. & Tukey, J. (1974). The fitting of power series, meaning polynomials, illustrated on band-spectroscopic data. *Technometrics*.
 * Christensen, J., Diebold, F. & Rudebusch, G. (2011). The affine arbitrage-free class of Nelson–Siegel term structure models. *Journal of Econometrics*.
 * Diebold, F. & Li, C. (2006). Forecasting the term structure of government bond yields. *Journal of Econometrics*.
@@ -383,7 +404,9 @@ are too narrow.
 * Harvey, D., Leybourne, S. & Newbold, P. (1997). Testing the equality of prediction mean squared errors. *International Journal of Forecasting*.
 * Ho, T. (1992). Key rate durations: measures of interest rate risks. *Journal of Fixed Income*.
 * Huber, P. (1964). Robust estimation of a location parameter. *Annals of Mathematical Statistics*.
+* Künsch, H. (1989). The jackknife and the bootstrap for general stationary observations. *Annals of Statistics*.
 * Litterman, R. & Scheinkman, J. (1991). Common factors affecting bond returns. *Journal of Fixed Income*.
 * Nelson, C. & Siegel, A. (1987). Parsimonious modeling of yield curves. *Journal of Business*.
 * Svensson, L. (1994). Estimating and interpreting forward interest rates: Sweden 1992–1994. NBER Working Paper 4871.
+* Timmermann, A. (2006). Forecast combinations. In *Handbook of Economic Forecasting*, vol. 1. Elsevier.
 * Willner, R. (1996). A new tool for portfolio managers: level, slope, and curvature durations. *Journal of Fixed Income*.
