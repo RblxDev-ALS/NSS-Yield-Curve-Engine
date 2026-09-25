@@ -1,5 +1,56 @@
 # Changelog
 
+## 2.0.0 — par-yield fitting, validation against the Fed, state-space model
+
+### Changed (affects results)
+* **Quotes are fitted as par yields by default** (`target="par"`). FRED CMT
+  yields are semi-annual par yields; 1.x fitted the continuously compounded zero
+  curve straight to them. The in-sample fit of the two is the same, but the old
+  zero curve is biased. It was 2.9× further from the truth on a simulated
+  par-quoted market (5.3 vs 1.9 bp; −5 bp at 30 years; −7.5 bp on the 5y5y
+  forward). On 1990–2026 FRED data it was 16.3 bp from the Federal Reserve's own
+  curve, against 10.0 bp for the par fit. `--target yield` restores the old behaviour.
+* The synthetic market quotes par yields (`quote="par"`) like FRED, so benchmarks
+  and tests exercise the realistic case.
+
+### Fixed
+* **Par yields at maturities that are not whole half-years** dropped the stub
+  coupon and ignored accrued interest. Plotted par curves were a sawtooth, and
+  off-grid `par_yield` values were wrong. CMT tenors were unaffected.
+* **Par calibration got stuck in the wrong basin** on ~7% of dates, because it
+  refined one start from the zero-curve fit (median cost 2.7 bp RMSE). It now
+  refines every basin of a grid search run on convexity-adjusted quotes, and
+  matches a brute-force reference.
+* When the par optimum pushed λ1 outside its bounds, the par fit was discarded
+  and reported as failed. λ1 is now fixed at the active bound and the rest re-solved.
+
+### Added
+* Analytic Jacobian for par fitting and de-duplicated coupon dates: ~20 ms per
+  weekly curve, down from ~70 ms.
+* **Robust fitting** (`--robust`): Huber then bisquare reweighting on
+  leverage-standardized residuals, using the penalized hat matrix. It is opt-in
+  because on FRED data it mainly rejects the persistent 20Y/10Y dislocations.
+* **Uncertainty**: leverage, effective degrees of freedom, σ̂, parameter
+  covariance, and delta-method confidence bands with t quantiles for
+  zero/par/forward curves (93–97% coverage for nominal 95%, tested).
+* **Validation against the Fed's GSW Svensson curve** (`data.load_gsw_parameters`,
+  `validation.compare_to_reference`). It reports bias, demeaned RMSE and change
+  correlation per maturity, in every FRED run.
+* **Near-term forward spread** (Engstrom & Sharpe, 2019) from the NSS forward curve.
+* **Pseudo-real-time recession evaluation**: probits re-estimated monthly on
+  outcomes known at the time, scored by out-of-sample AUC, Brier and log score,
+  with a ridge prior against perfect separation. The report compares 10y−3m,
+  the forward spread, and both together.
+* **State-space dynamic Nelson–Siegel** (`statespace.fit_dns`), a Kalman filter
+  and maximum-likelihood model after Diebold, Rudebusch & Aruoba (2006), with
+  exact missing-data handling, predictive intervals and an optional random-walk
+  level. The steady-state filter is vectorized: one fit takes ~3 s instead of ~60 s.
+* Real-data studies: comparison with the GSW curve by fitting target, and
+  state-space forecasts with interval coverage.
+* Dashboard: confidence band and rejected quotes on today's curve, forward
+  spread vs 10y−3m, gap to the Fed's curve, and a state-space forecast fan.
+* Diagnostics: optimizer messages per date, and the share of fits with a decay rate at a bound.
+
 ## 1.0.0 — rebuilt as a tested package
 
 The original version was a single Colab-exported script. Version 1.0 rebuilds

@@ -17,20 +17,26 @@ Quick start::
 from .calibration import CalibrationConfig, FitResult, PanelFit, calibrate, calibrate_panel
 from .models import DIEBOLD_LI_LAMBDA, NSSCurve, ns_loadings, nss_loadings
 from .pipeline import PipelineConfig, PipelineResult, run_pipeline, write_outputs
+from .statespace import DNSResult, fit_dns
+from .validation import ReferenceComparison, compare_to_reference
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "DIEBOLD_LI_LAMBDA",
     "CalibrationConfig",
+    "DNSResult",
     "FitResult",
     "NSSCurve",
     "PanelFit",
     "PipelineConfig",
     "PipelineResult",
+    "ReferenceComparison",
     "__version__",
     "calibrate",
     "calibrate_panel",
+    "compare_to_reference",
+    "fit_dns",
     "ns_loadings",
     "nss_loadings",
     "run_pipeline",
