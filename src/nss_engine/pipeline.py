@@ -13,10 +13,18 @@ import numpy as np
 import pandas as pd
 
 from . import analytics, forecasting, regime
-from .calibration import DEFAULT_PANEL_SMOOTHING, CalibrationConfig, PanelFit, calibrate_panel
+from .calibration import (
+    DEFAULT_PANEL_SMOOTHING,
+    CalibrationConfig,
+    FitResult,
+    PanelFit,
+    calibrate,
+    calibrate_panel,
+)
 from .data import (
     DataError,
     label_columns,
+    load_gsw_parameters,
     load_recession_indicator,
     load_treasury_yields,
     load_yields_csv,
@@ -24,6 +32,7 @@ from .data import (
 )
 from .models import NSSCurve, curvature_peak
 from .synthetic import simulate_market
+from .validation import ReferenceComparison, compare_to_reference
 
 #: Standard tenors reported in risk / carry tables.
 REPORT_TENORS = (2.0, 5.0, 10.0, 30.0)
@@ -42,7 +51,9 @@ class PipelineConfig:
     end: str | None = None
     freq: str = "W-FRI"
     calibration: CalibrationConfig = field(
-        default_factory=lambda: CalibrationConfig(lambda_smoothing=DEFAULT_PANEL_SMOOTHING)
+        default_factory=lambda: CalibrationConfig(
+            lambda_smoothing=DEFAULT_PANEL_SMOOTHING, robust=True
+        )
     )
     slope_long: float = 10.0
     slope_short: float = 0.25  # 10y-3m: the NY Fed / Estrella-Mishkin spread
@@ -53,6 +64,8 @@ class PipelineConfig:
     seed: int = 0
     synthetic_years: int = 34
     run_forecasts: bool = True
+    #: Compare with the Fed's GSW curve (FRED source) or the true curve (synthetic).
+    reference_curve: bool = True
 
 
 @dataclass
@@ -75,6 +88,9 @@ class PipelineResult:
     carry: pd.DataFrame
     risk: dict[str, analytics.RiskReport]
     true_params: pd.DataFrame | None = None
+    latest_fit: FitResult | None = None
+    reference: ReferenceComparison | None = None
+    reference_name: str | None = None
     summary: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -122,6 +138,17 @@ def run_pipeline(
     fit = calibrate_panel(yields, cfg.calibration)
     if fit.params.empty:
         raise RuntimeError("calibration failed on every date")
+    latest_fit = _refit_latest(yields, fit, cfg.calibration)
+
+    reference, reference_name = None, None
+    if cfg.reference_curve:
+        ref_params, reference_name = _reference_params(cfg, true_params)
+        if ref_params is not None:
+            say(f"comparing with {reference_name}")
+            try:
+                reference = compare_to_reference(fit, ref_params)
+            except ValueError:
+                reference = None
 
     # ---- spreads & regimes ------------------------------------------------------
     say("classifying regimes")
@@ -217,10 +244,34 @@ def run_pipeline(
         carry=carry,
         risk=risk,
         true_params=true_params,
+        latest_fit=latest_fit,
+        reference=reference,
+        reference_name=reference_name if reference is not None else None,
     )
     result.summary = build_summary(result)
     say("done")
     return result
+
+
+def _refit_latest(yields: pd.DataFrame, fit: PanelFit, cfg: CalibrationConfig) -> FitResult:
+    """Re-run the last date's fit to get its full diagnostics (bands, leverage, weights)."""
+    date = fit.params.index[-1]
+    previous = fit.curve(-2) if len(fit.params) > 1 else None
+    row = yields.loc[date]
+    return calibrate(np.asarray(row.index, dtype=float), row.to_numpy(), cfg, previous=previous)
+
+
+def _reference_params(
+    cfg: PipelineConfig, true_params: pd.DataFrame | None
+) -> tuple[pd.DataFrame | None, str | None]:
+    if true_params is not None:
+        return true_params, "the true curve (synthetic market)"
+    if cfg.source == "fred":
+        try:
+            return load_gsw_parameters(cfg.start, cfg.end), "the Federal Reserve's GSW curve"
+        except DataError:
+            return None, None
+    return None, None
 
 
 def _periods_per_month(freq: str) -> int:
@@ -277,6 +328,8 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
             "runtime_ms_median": diag["runtime_ms"].median(),
             "success_rate": float(diag["success"].mean()),
             "share_ns_fallback": float((diag["model"] == "ns").mean()),
+            "rmse_clean_median": diag["rmse_clean_bp"].median(),
+            "sigma_median": diag["sigma_bp"].median(),
         },
         "regime": {
             "current": str(current["regime"]),
@@ -317,6 +370,23 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
         s["forecast_relative_rmse"] = {f"h={h}": rel.loc[h].to_dict() for h in rel.index}
     if r.true_params is not None:
         s["synthetic_truth"] = _truth_errors(r)
+    if r.config.calibration.robust and r.fit.outliers is not None:
+        flags = r.fit.outliers
+        observed = r.fit.residuals_bp.notna()
+        by_tenor = (flags.sum() / observed.sum().replace(0, np.nan)).rename(
+            index=lambda c: maturity_label(float(c))
+        )
+        s["outliers"] = {
+            "share_of_quotes": float(flags.to_numpy().sum() / max(observed.to_numpy().sum(), 1)),
+            "share_by_tenor": by_tenor.to_dict(),
+            "latest": [maturity_label(float(c)) for c in flags.columns[flags.iloc[-1].to_numpy()]],
+        }
+    if r.reference is not None:
+        s["reference_curve"] = {
+            "name": r.reference_name,
+            **r.reference.overall(),
+            "bias_bp": r.reference.summary()["bias_bp"].to_dict(),
+        }
     return _clean(s)
 
 
@@ -375,6 +445,14 @@ def write_outputs(
         )
     paths["signals"] = out / "macro_signals.csv"
     signals.to_csv(paths["signals"], float_format="%.4f")
+
+    if result.fit.outliers is not None and result.config.calibration.robust:
+        paths["outliers"] = out / "outliers.csv"
+        label_columns(result.fit.outliers.astype(int)).to_csv(paths["outliers"])
+
+    if result.reference is not None:
+        paths["reference"] = out / "reference_comparison.csv"
+        result.reference.summary().to_csv(paths["reference"], float_format="%.3f")
 
     paths["summary"] = out / "summary.json"
     paths["summary"].write_text(json.dumps(result.summary, indent=2, default=str))

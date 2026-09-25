@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
 from .data import maturity_label
@@ -74,8 +75,20 @@ def render_markdown(r: PipelineResult) -> str:
         },
         index=pd.Index([maturity_label(float(t)) for t in tenors], name="tenor"),
     )
+    lf = r.latest_fit
+    if lf is not None and lf.success:
+        lo, hi = lf.confidence_band(tenors)
+        tbl["zero_95ci_bp"] = [f"±{v:.1f}" for v in (hi - lo) / 2 * 100]
+        flagged = set(np.round(lf.maturities[lf.outliers], 8))
+        tbl["quote"] = ["rejected" if round(float(t), 8) in flagged else "" for t in tenors]
     add(_table(tbl))
     add("")
+    if lf is not None and lf.outliers.any():
+        add(
+            "*Rejected* quotes were down-weighted by the robust fit; their residual shows the "
+            "full dislocation from the curve implied by the other tenors."
+        )
+        add("")
 
     add("## Fit quality")
     add("")
@@ -91,11 +104,45 @@ def render_markdown(r: PipelineResult) -> str:
         add(
             f"* {fq['share_ns_fallback']:.1%} of dates had too few tenors for NSS and used Nelson-Siegel"
         )
+    if fq.get("rmse_clean_median") is not None and r.config.calibration.robust:
+        add(
+            f"* Median RMSE over quotes the robust fit kept: **{fq['rmse_clean_median']:.2f} bp**; "
+            f"median estimated quote noise σ̂ {fq['sigma_median']:.2f} bp"
+        )
+    if "outliers" in s:
+        ol = s["outliers"]
+        add(
+            f"* Robust fit rejected **{ol['share_of_quotes']:.2%}** of quotes. Share by tenor: "
+            + ", ".join(
+                f"{k} {v:.1%}" for k, v in ol["share_by_tenor"].items() if v is not None and v > 0
+            )
+        )
     if "synthetic_truth" in s:
         add(
             f"* Fitted vs **true** curve RMSE: {s['synthetic_truth']['curve_rmse_vs_truth_bp']:.2f} bp"
         )
     add("")
+
+    if r.reference is not None:
+        ov = s["reference_curve"]
+        add(f"## Validation against {r.reference_name}")
+        add("")
+        add(
+            f"Zero curves compared on {int(ov['n_dates'])} common dates, 1–30 years: RMSE "
+            f"**{ov['rmse_bp']:.1f} bp** ({ov['demeaned_rmse_bp']:.1f} bp after removing each "
+            f"maturity's average gap); period-to-period changes correlate "
+            f"**{ov['mean_change_corr']:.3f}** on average."
+        )
+        add("")
+        add(_table(r.reference.summary().T, ".2f"))
+        add("")
+        if "GSW" in (r.reference_name or ""):
+            add(
+                "The Fed's curve is fitted to off-the-run notes and bonds; this engine fits "
+                "on-the-run constant-maturity par yields. On-the-run issues trade rich, so a "
+                "small negative bias is expected - the change correlation measures tracking."
+            )
+            add("")
 
     add("## Macro regime")
     add("")

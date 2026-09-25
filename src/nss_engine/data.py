@@ -296,6 +296,107 @@ def load_recession_indicator(
     return s
 
 
+# =============================================================================
+# Federal Reserve (Gürkaynak-Sack-Wright) Svensson curve
+# =============================================================================
+
+#: The Fed's daily Svensson zero-curve parameters (Gürkaynak, Sack & Wright, 2007).
+GSW_URL = "https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv"
+
+
+def parse_gsw_csv(text: str) -> pd.DataFrame:
+    """Parse ``feds200628.csv`` into NSS parameters in this package's convention.
+
+    The file starts with a few lines of notes, then a header row beginning with
+    ``Date`` and columns including ``BETA0..BETA3``, ``TAU1``, ``TAU2`` (and the
+    fitted yields ``SVENY01..SVENY30``). GSW use time constants ``τ = 1/λ``;
+    before 1980 they fit Nelson-Siegel, leaving ``BETA3``/``TAU2`` empty, which
+    maps to ``beta3 = 0`` here. Missing values are ``NA``.
+
+    Returns columns ``beta0 … lambda2`` indexed by date; rows that cannot form a
+    valid curve are dropped.
+    """
+    lines = text.splitlines()
+    header = next(
+        (i for i, ln in enumerate(lines) if ln.split(",", 1)[0].strip().strip('"') == "Date"),
+        None,
+    )
+    if header is None:
+        raise DataError("could not find the 'Date' header row in the GSW file")
+    df = pd.read_csv(
+        io.StringIO("\n".join(lines[header:])), na_values=["NA", ".", ""], keep_default_na=True
+    )
+    df.columns = [str(c).strip().strip('"').upper() for c in df.columns]
+    needed = {"DATE", "BETA0", "BETA1", "BETA2", "TAU1"}
+    if not needed <= set(df.columns):
+        raise DataError(f"GSW file lacks columns {sorted(needed - set(df.columns))}")
+    num = df.drop(columns="DATE").apply(pd.to_numeric, errors="coerce")
+    beta3 = num["BETA3"] if "BETA3" in num else pd.Series(0.0, index=num.index)
+    tau2 = num["TAU2"] if "TAU2" in num else pd.Series(np.nan, index=num.index)
+    ns = beta3.isna() | tau2.isna() | (tau2 <= 0)
+    out = pd.DataFrame(
+        {
+            "beta0": num["BETA0"],
+            "beta1": num["BETA1"],
+            "beta2": num["BETA2"],
+            "beta3": beta3.where(~ns, 0.0),
+            "lambda1": 1.0 / num["TAU1"],
+            "lambda2": (1.0 / tau2).where(~ns, 1.0 / num["TAU1"]),
+        }
+    )
+    out.index = pd.DatetimeIndex(pd.to_datetime(df["DATE"], errors="coerce"), name="date")
+    valid = out.notna().all(axis=1) & (out["lambda1"] > 0) & out.index.notna()
+    return out[valid].sort_index()
+
+
+def load_gsw_parameters(
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    *,
+    cache_dir: Path | str | None = None,
+    max_age_hours: float = 24.0,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """Download (with caching) the Fed's Svensson curve parameters.
+
+    This is an *independent* estimate of the same object this package fits:
+    GSW fit off-the-run Treasury notes and bonds (no bills, no on-the-run
+    issues, no 20-year bond) by minimising duration-weighted price errors. It
+    is the natural benchmark for the zero curves estimated here from CMT par
+    yields. Their curve is reliable from about 1 year to 30 years.
+    """
+    text = _cached_text("feds200628", GSW_URL, cache_dir, max_age_hours, refresh)
+    return parse_gsw_csv(text).loc[slice(start, end)]
+
+
+def _cached_text(
+    key: str,
+    url: str,
+    cache_dir: Path | str | None,
+    max_age_hours: float,
+    refresh: bool,
+) -> str:
+    cache = Path(cache_dir) if cache_dir is not None else default_cache_dir()
+    path = cache / f"{key}.csv"
+    fresh = path.exists() and (time.time() - path.stat().st_mtime) / 3600.0 <= max_age_hours
+    if fresh and not refresh:
+        return path.read_text()
+    try:
+        text = _http_get(url, timeout=120.0)
+    except DataError:
+        if path.exists():
+            import warnings
+
+            warnings.warn(
+                f"download of {url} failed; using stale cache {path}", RuntimeWarning, stacklevel=3
+            )
+            return path.read_text()
+        raise
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return text
+
+
 def load_yields_csv(path: str | Path) -> pd.DataFrame:
     """Load a yield panel from CSV.
 

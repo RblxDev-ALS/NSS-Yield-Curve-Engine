@@ -49,11 +49,21 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
         default=DEFAULT_PANEL_SMOOTHING,
         help="penalty on week-to-week log-lambda changes (0 disables)",
     )
+    p.add_argument(
+        "--robust",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="down-weight bad quotes (Huber/bisquare reweighting); default on",
+    )
 
 
 def _calibration_config(args: argparse.Namespace) -> CalibrationConfig:
     return CalibrationConfig(
-        model=args.model, target=args.target, ridge=args.ridge, lambda_smoothing=args.smoothing
+        model=args.model,
+        target=args.target,
+        ridge=args.ridge,
+        lambda_smoothing=args.smoothing,
+        robust=args.robust,
     )
 
 
@@ -67,6 +77,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         synthetic_years=args.years,
         calibration=_calibration_config(args),
         run_forecasts=not args.no_forecast,
+        reference_curve=not args.no_reference,
     )
     t0 = time.perf_counter()
     result = run_pipeline(
@@ -148,6 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--out", default="output", help="output directory (default ./output)")
     p_run.add_argument("--no-dashboard", action="store_true", help="skip the HTML dashboard")
     p_run.add_argument("--no-forecast", action="store_true", help="skip the forecast evaluation")
+    p_run.add_argument(
+        "--no-reference",
+        action="store_true",
+        help="skip the comparison with the Federal Reserve's (GSW) curve",
+    )
     p_run.add_argument(
         "--offline",
         action="store_true",
