@@ -13,6 +13,10 @@
    CMT quotes are compared with the Fed's independently estimated Svensson
    curve (Gürkaynak, Sack & Wright, 2007) for each way of reading the quotes.
    With ``--source synthetic`` the reference is the known true curve.
+4. **State-space dynamic Nelson-Siegel.** Kalman-filter/MLE forecasts
+   (Diebold, Rudebusch & Aruoba, 2006), with a mean-reverting or a
+   random-walk level, against the random walk - point accuracy and the
+   coverage of 80% forecast intervals.
 
 Usage::
 
@@ -36,6 +40,7 @@ from nss_engine.calibration import (
 )
 from nss_engine.data import DataError, load_gsw_parameters, load_treasury_yields, maturity_label
 from nss_engine.forecasting import evaluate_forecasts
+from nss_engine.statespace import evaluate_dns_forecasts
 from nss_engine.synthetic import simulate_market
 from nss_engine.validation import compare_to_reference
 
@@ -147,6 +152,34 @@ def main() -> None:
     # ---- 3. agreement with the Fed's (GSW) curve -------------------------------------
     if reference is not None:
         gsw_study(monthly, reference, args.source)
+
+    # ---- 4. state-space dynamic Nelson-Siegel ------------------------------------------
+    dns_study(core, fc)
+
+
+def dns_study(core: pd.DataFrame, two_step: pd.DataFrame) -> None:
+    t0 = time.perf_counter()
+    rows, cover = {}, {}
+    for label, unit_root in (("VAR(1)", False), ("VAR(1), random-walk level", True)):
+        ev = evaluate_dns_forecasts(
+            core, horizons=(1, 6, 12), min_train=120, reestimate_every=12, level_unit_root=unit_root
+        )
+        rel = ev.relative_rmse
+        rows[f"state-space {label}"] = {f"h={h}m": rel.loc[h].mean() for h in rel.index}
+        cover[f"state-space {label}"] = {f"h={h}m": ev.coverage.loc[h].mean() for h in rel.index}
+    table = pd.concat([two_step, pd.DataFrame(rows).T])
+    table.index.name = "model"
+    print("\n## State-space dynamic Nelson-Siegel (Kalman filter, MLE)\n")
+    print(
+        "RMSE relative to the random walk, averaged over tenors (<1 = better); parameters "
+        "re-estimated every 12 months on data up to each origin.\n"
+    )
+    print(table.round(3).to_markdown())
+    print("\nCoverage of 80% forecast intervals (share of outcomes inside):\n")
+    cov = pd.DataFrame(cover).T
+    cov.index.name = "model"
+    print(cov.round(3).to_markdown())
+    print(f"\n({time.perf_counter() - t0:.0f} s)")
 
 
 def gsw_study(monthly: pd.DataFrame, reference: pd.DataFrame, source: str) -> None:
