@@ -3,7 +3,7 @@
 [![CI](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml)
 [![Live dashboard](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml)
 ![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
-![Tests](https://img.shields.io/badge/tests-162%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-163%20passing-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
 
 A Python engine that fits the **Nelson–Siegel–Svensson (NSS)** model to the U.S.
@@ -98,8 +98,8 @@ model but still loses to no-change:
 |---|---:|---:|---:|---:|
 | Diebold–Li, AR(1) factors | 1.112 | 1.072 | 1.090 | – |
 | Diebold–Li, VAR(1) factors | 1.089 | **1.018** | **1.028** | – |
-| state-space, VAR(1) | **1.087** | 1.033 | 1.063 | 86% / 79% / 73% |
-| state-space, random-walk level | 1.103 | 1.061 | 1.074 | 85% / 79% / 77% |
+| state-space, VAR(1) | **1.088** | 1.029 | 1.048 | 86% / 79% / 73% |
+| state-space, random-walk level | 1.103 | 1.062 | 1.073 | 85% / 79% / 77% |
 
 (RMSE relative to the random walk, averaged over tenors; < 1 would beat it.)
 The state-space intervals are well calibrated at short horizons and somewhat
@@ -251,7 +251,7 @@ Treasury market** with known true parameters. It follows a dynamic NSS model wit
 a zero lower bound and realistic inversions. The tests and benchmarks can then
 check correctness, not just that the code runs.
 
-* **162 tests, 96% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
+* **163 tests, 96% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
 * **Math identities**: the forward curve integrates back to the zero curve, par
   bonds price at exactly 100, key-rate durations sum to duration, and the level
   factor duration equals duration.
@@ -330,7 +330,7 @@ src/nss_engine/
   validation.py    comparison with a reference curve (the Fed's GSW curve)
   pipeline.py      end-to-end run and exports
   report.py, viz.py, cli.py
-tests/             162 tests (incl. a real market curve)
+tests/             163 tests (incl. a real market curve)
 benchmarks/        v0 / 1.x / 2.0 comparison, regularization tuning, real-data studies
 docs/              methodology and references
 ```
