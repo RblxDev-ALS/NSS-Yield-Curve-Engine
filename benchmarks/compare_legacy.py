@@ -1,5 +1,9 @@
 """Benchmark: original (v0) calibration vs. the variable-projection calibrator.
 
+The synthetic market quotes *par* yields, like the FRED constant-maturity
+series, so this also measures what fitting the zero curve directly to par
+quotes (v0, and v1's former default ``target="yield"``) costs in accuracy.
+
 The v0 engine fitted all six NSS parameters at once with L-BFGS-B, warm-started
 from the previous week, with an L2 penalty of 0.005·(β2² + β3²) added to the
 mean squared error. This script re-implements that routine verbatim and
@@ -22,7 +26,12 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
-from nss_engine.calibration import calibrate, calibrate_panel
+from nss_engine.calibration import (
+    DEFAULT_PANEL_SMOOTHING,
+    CalibrationConfig,
+    calibrate,
+    calibrate_panel,
+)
 from nss_engine.models import NSSCurve, nss_zero
 from nss_engine.synthetic import simulate_market
 
@@ -62,10 +71,11 @@ def run_legacy(panel: pd.DataFrame, l2_lambda: float) -> tuple[pd.DataFrame, flo
     return pd.DataFrame(out, index=panel.index, columns=cols), ms
 
 
-def run_single_date(panel: pd.DataFrame) -> tuple[pd.DataFrame, float]:
+def run_single_date(panel: pd.DataFrame, target: str = "par") -> tuple[pd.DataFrame, float]:
     mats = np.asarray(panel.columns, dtype=float)
+    cfg = CalibrationConfig(target=target)
     t0 = time.perf_counter()
-    rows = [calibrate(mats, r).curve.as_array() for r in panel.to_numpy()]
+    rows = [calibrate(mats, r, cfg).curve.as_array() for r in panel.to_numpy()]
     ms = (time.perf_counter() - t0) / len(panel) * 1e3
     return pd.DataFrame(rows, index=panel.index, columns=GRID_COLS), ms
 
@@ -73,21 +83,29 @@ def run_single_date(panel: pd.DataFrame) -> tuple[pd.DataFrame, float]:
 GRID_COLS = ["beta0", "beta1", "beta2", "beta3", "lambda1", "lambda2"]
 
 
-def run_panel(panel: pd.DataFrame) -> tuple[pd.DataFrame, float]:
+def run_panel(panel: pd.DataFrame, target: str = "par") -> tuple[pd.DataFrame, float]:
     t0 = time.perf_counter()
-    fit = calibrate_panel(panel)
+    fit = calibrate_panel(
+        panel, CalibrationConfig(target=target, lambda_smoothing=DEFAULT_PANEL_SMOOTHING)
+    )
     ms = (time.perf_counter() - t0) / len(panel) * 1e3
     return fit.params.reindex(panel.index), ms
 
 
 def metrics(
-    params: pd.DataFrame, panel: pd.DataFrame, truth: pd.DataFrame, ms: float
+    params: pd.DataFrame, panel: pd.DataFrame, truth: pd.DataFrame, ms: float, measure: str
 ) -> dict[str, float]:
+    """``measure`` is what the method fits to the quotes (``zero`` or ``par``)."""
     mats = np.asarray(panel.columns, dtype=float)
     ok = params.notna().all(axis=1)
     p = params[ok].to_numpy()
     fitted = np.array(
-        [NSSCurve.from_array(x).zero(mats) if x[4] > 0 else np.full(mats.size, np.nan) for x in p]
+        [
+            NSSCurve.from_array(x).evaluate(mats, measure)
+            if x[4] > 0
+            else np.full(mats.size, np.nan)
+            for x in p
+        ]
     )
     resid_bp = (panel[ok].to_numpy() - fitted) * 100
     rmse = np.sqrt(np.nanmean(resid_bp**2, axis=1))
@@ -117,19 +135,23 @@ def main() -> None:
     args = ap.parse_args()
 
     methods = {
-        "v0: L-BFGS-B + ridge 0.005 (original)": lambda y: run_legacy(y, 0.005),
-        "v0 without ridge": lambda y: run_legacy(y, 0.0),
-        "v1: variable projection, per date": run_single_date,
-        "v1: variable projection + λ smoothing (default)": run_panel,
+        "v0: L-BFGS-B + ridge 0.005 (original)": (lambda y: run_legacy(y, 0.005), "zero"),
+        "v0 without ridge": (lambda y: run_legacy(y, 0.0), "zero"),
+        "v1: var. projection + λ smoothing, zero target (1.0 default)": (
+            lambda y: run_panel(y, "yield"),
+            "zero",
+        ),
+        "v2: par target, per date": (run_single_date, "par"),
+        "v2: par target + λ smoothing (default)": (run_panel, "par"),
     }
     results: dict[str, list[dict[str, float]]] = {k: [] for k in methods}
     for seed in args.seeds:
         mkt = simulate_market(
             periods=52 * args.years, seed=seed, noise_bp=args.noise_bp, missing_short_end_until=None
         )
-        for name, fn in methods.items():
+        for name, (fn, measure) in methods.items():
             params, ms = fn(mkt.yields)
-            results[name].append(metrics(params, mkt.yields, mkt.true_params, ms))
+            results[name].append(metrics(params, mkt.yields, mkt.true_params, ms, measure))
             print(f"seed {seed}: {name} done", flush=True)
 
     table = pd.DataFrame({k: pd.DataFrame(v).mean() for k, v in results.items()}).T

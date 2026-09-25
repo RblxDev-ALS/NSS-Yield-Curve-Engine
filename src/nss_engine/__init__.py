@@ -9,7 +9,7 @@ Quick start::
     >>> import numpy as np
     >>> tau = np.array([0.25, 0.5, 1, 2, 3, 5, 7, 10, 20, 30])
     >>> true = NSSCurve(4.5, -1.5, -2.0, 1.0, 0.9, 0.15)
-    >>> fit = calibrate(tau, true.zero(tau))
+    >>> fit = calibrate(tau, true.par_yield(tau))  # quotes are par yields, like FRED CMT
     >>> round(fit.rmse_bp, 3) < 0.1
     True
 """
