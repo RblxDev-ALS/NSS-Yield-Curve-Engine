@@ -36,6 +36,10 @@ def test_pipeline_result(result):
     assert "true curve" in ref["name"] and ref["rmse_bp"] < 5 and ref["mean_change_corr"] > 0.8
     assert abs(ref["bias_bp"]["10Y"]) < 2
     assert 0 <= s["outliers"]["share_of_quotes"] < 0.02
+    preds = s["recession_predictors"]
+    assert {"10Y−3M spread", "near-term forward spread", "both"} <= set(preds)
+    assert 0 <= preds["both"]["auc_out_of_sample"] <= 1
+    assert "near_term_fwd" in result.spreads
     assert s["fit_quality_bp"]["rmse_clean_median"] <= s["fit_quality_bp"]["rmse_median"]
     lo, hi = result.latest_fit.confidence_band([2, 10])
     assert np.all(hi - lo > 0)
@@ -53,6 +57,7 @@ def test_write_outputs(result, tmp_path):
     report = paths["report"].read_text()
     assert "Synthetic data" in report and "Recession probability" in report
     assert "Validation against the true curve" in report and "zero_95ci_bp" in report
+    assert "pseudo-real time" in report
     assert paths["outliers"].exists() and paths["reference"].exists()
     html = paths["dashboard"].read_text()
     assert html.count("plotly-graph-div") >= 8

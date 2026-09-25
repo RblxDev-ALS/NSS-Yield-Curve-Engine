@@ -89,6 +89,7 @@ class PipelineResult:
     risk: dict[str, analytics.RiskReport]
     true_params: pd.DataFrame | None = None
     latest_fit: FitResult | None = None
+    recession_comparison: pd.DataFrame | None = None
     reference: ReferenceComparison | None = None
     reference_name: str | None = None
     summary: dict[str, Any] = field(default_factory=dict)
@@ -166,6 +167,7 @@ def run_pipeline(
         if lo in obs.columns and hi in obs.columns:
             spreads[name] = obs[hi] - obs[lo]
     spreads["slope"] = model_on[cfg.slope_long] - model_on[cfg.slope_short]
+    spreads["near_term_fwd"] = regime.near_term_forward_spread(fit.params)
     regimes = regime.classify_slope(spreads["slope"])
     level = model_on[[2.0, 5.0, 10.0]].mean(axis=1)
     dynamics = regime.curve_dynamics(
@@ -174,6 +176,7 @@ def run_pipeline(
 
     rec_model = None
     lead_times = None
+    rec_comparison = None
     if recession is not None and recession.sum() > 0:
         say("fitting recession probit")
         try:
@@ -182,6 +185,19 @@ def run_pipeline(
             )
         except ValueError:
             rec_model = None
+        say("evaluating recession predictors in pseudo-real time")
+        try:
+            rec_comparison = regime.compare_recession_predictors(
+                {
+                    f"{_spread_label(cfg)} spread": spreads["slope"],
+                    "near-term forward spread": spreads["near_term_fwd"],
+                    "both": spreads[["slope", "near_term_fwd"]],
+                },
+                recession,
+                cfg.recession_horizon,
+            )
+        except ValueError:
+            rec_comparison = None
         lead_times = regime.inversion_lead_times(regime.to_monthly(spreads["slope"]), recession)
 
     # ---- factor validation --------------------------------------------------------
@@ -245,12 +261,17 @@ def run_pipeline(
         risk=risk,
         true_params=true_params,
         latest_fit=latest_fit,
+        recession_comparison=rec_comparison,
         reference=reference,
         reference_name=reference_name if reference is not None else None,
     )
     result.summary = build_summary(result)
     say("done")
     return result
+
+
+def _spread_label(cfg: PipelineConfig) -> str:
+    return f"{maturity_label(cfg.slope_long)}−{maturity_label(cfg.slope_short)}"
 
 
 def _refit_latest(yields: pd.DataFrame, fit: PanelFit, cfg: CalibrationConfig) -> FitResult:
@@ -358,6 +379,8 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
             "latest_probability": m.latest_probability,
             "target_month": m.target_date,
         }
+    if r.recession_comparison is not None:
+        s["recession_predictors"] = r.recession_comparison.to_dict(orient="index")
     if r.lead_times is not None and not r.lead_times.empty:
         lt = r.lead_times
         s["inversions"] = {
