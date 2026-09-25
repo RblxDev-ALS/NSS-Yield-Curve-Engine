@@ -1,0 +1,5 @@
+# Runtime dependencies (mirrors pyproject.toml). Prefer `pip install -e .`
+numpy>=1.24
+pandas>=2.2
+scipy>=1.10
+plotly>=5.18
