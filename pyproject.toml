@@ -1,0 +1,73 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nss-engine"
+version = "2.0.0"
+description = "Nelson-Siegel-Svensson yield curve engine: robust calibration, curve analytics, macro regime detection and factor forecasting for the U.S. Treasury curve."
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["yield curve", "nelson-siegel", "svensson", "fixed income", "term structure", "quantitative finance"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.2",
+    "scipy>=1.10",
+    "plotly>=5.18",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "hypothesis>=6.90",
+    "ruff>=0.5",
+    "mypy>=1.8",
+    "tabulate>=0.9",  # DataFrame.to_markdown in benchmarks/
+]
+
+[project.scripts]
+nss-engine = "nss_engine.cli:main"
+
+[project.urls]
+Repository = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nss_engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "network: test requires internet access to FRED (deselect with '-m \"not network\"')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests", "benchmarks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "NPY", "PD", "RUF"]
+ignore = [
+    "E501",   # line length is handled by `ruff format`; long strings are allowed
+    "N803",   # argument names like `X` / `tau` follow math notation
+    "N806",   # variable names like `X`, `A` follow math notation
+    "RUF001", # typographic minus signs / Greek letters in labels are intentional
+    "RUF002",
+    "RUF003",
+]
+
+[tool.mypy]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+files = ["src/nss_engine"]
