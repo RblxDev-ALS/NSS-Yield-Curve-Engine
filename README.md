@@ -22,7 +22,7 @@ this project is about doing it robustly and proving that it works.
 ## Results on real Treasury data
 
 From the latest run of the [live workflow](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml):
-1,917 weekly curves, from January 1990 to 23 September 2026.
+1,917 weekly curves, from January 1990 to 24 September 2026.
 
 | | |
 |---|---|
@@ -33,6 +33,7 @@ From the latest run of the [live workflow](https://github.com/RblxDev-ALS/NSS-Yi
 | Inversions detected (≥ 3 months, 10Y−3M) | 2000, 2006, 2019: each followed by a recession after **8, 18 and 10 months**. 2022–24: the deepest inversion in the sample (−1.8 pp, 25 months), with no recession so far |
 | Recession prediction, **pseudo-real time** | out-of-sample AUC **0.71** for the near-term forward spread vs 0.61 for 10Y−3M (both 0.78 in sample). With only three recessions to score, the 90% interval on the gap, [−0.04, +0.21], includes zero |
 | Forecasts vs random walk | the random walk **wins** for every model at 1, 6 and 12 months (RMSE ratios 1.02–1.24). An equal model + random-walk average ties it (0.99–1.01) |
+| **Term premium** (new in 2.2) | 10Y zero yield 5.18% = **3.27%** expected short rate + **1.91%** term premium. Run on the engine's curves, the model tracks the same model run on the **Fed's curve** with correlation **0.99** (12-month changes 0.95) |
 
 ### The biggest fix in 2.0: the quotes are par yields
 
@@ -98,6 +99,56 @@ prove it. Putting both signals in one model looks best in sample and is the
 worst out of sample, which is the classic sign of overfitting with too few
 recessions for two slopes, although that gap is not statistically clear either.
 
+### Term premium: what is in a 10-year yield? (new in 2.2)
+
+A 10-year yield is the average short rate investors expect over ten years plus a
+**term premium**, the extra return they demand for locking money up. The two mean
+different things: one is the market's forecast of Fed policy, the other is the
+price of duration risk. 2.2 separates them with the regression-based model of
+**Adrian, Crump & Moench (2013)**, the method behind the New York Fed's published
+term premium, run on the engine's own zero curves (1–120 months, month-end,
+five principal components).
+
+| 10-year term premium, monthly 1990–2026 | correlation (levels) | correlation (12-month changes) | RMSE | mean gap |
+|---|---:|---:|---:|---:|
+| vs the **same model on the Fed's GSW curve** | **0.99** | **0.95** | 31 bp | +15 bp |
+| vs **Kim–Wright** (Fed Board, FRED `THREEFYTP10`) | 0.96 | 0.75 | 121 bp | +103 bp |
+
+* **The engine's curves are good enough for term-structure modelling.** Swapping
+  the Fed's curve for this engine's changes the premium by 31 bp RMSE, far less
+  than the disagreement between models.
+* **Models disagree about the level.** ACM puts the premium about a point above
+  Kim–Wright, on the Fed's curve as much as on this one. Kim–Wright anchors
+  expectations with surveys of forecasters; ACM relies on the sample average of
+  rates, which fell for most of 1990–2020. The two agree on the *shape* of
+  history (0.96): a premium near 4–5% in 1990, below zero in 2020 (−1.0%, July),
+  and back near 2% in 2026.
+* **Checked against a known truth.** On a simulated arbitrage-free market
+  (`synthetic.simulate_affine_market`) the model recovers the risk-neutral
+  dynamics exactly. All of its error comes from estimating how persistent
+  rates are, and that error shrinks as the sample grows (17 → 8 bp).
+
+**Can it be used in real time? Not yet.** A full-sample estimate splits 1995's
+yields using what rates did through 2026. Re-estimating every month on past
+data only gives a much noisier series:
+
+| real-time estimate, first estimate after | correlation with the full-sample premium | with Kim–Wright |
+|---|---:|---:|
+| 5 years (Dec 1994) | 0.43 | 0.24 |
+| 10 years (Dec 1999) | 0.58 | 0.38 |
+| 15 years (Dec 2004) | 0.70 | 0.49 |
+
+The estimates improve steadily as history accumulates, and the stationarity
+safeguard almost never binds (0.3% of months), so this is not a numerical
+problem: it takes decades of data to pin down where rates revert to. The same
+weakness shows in recession forecasting. On the 238 months where every signal
+has a real-time value (from 2006, a window that includes the 2022–24 inversion
+with no recession), no curve signal beats a coin flip out of sample: AUC 0.50
+for 10Y−3M, 0.44 for its expectations component, 0.24 for the premium alone.
+Rosenberg & Maurer (2008) found the expectations component carries the signal;
+this sample cannot confirm it.
+
+
 ### Forecasting: the random walk still wins
 
 Diebold & Li's model beat "no change" at 12-month horizons in their original
@@ -106,7 +157,9 @@ average struggles through decades of falling rates and the zero lower bound. The
 random walk is famously hard to beat (Duffee, 2002). 2.0 adds the **state-space
 version** (Kalman filter, all parameters estimated jointly by maximum
 likelihood; Diebold, Rudebusch & Aruoba, 2006). It improves on the two-step AR
-model but still loses to no-change:
+model but still loses to no-change. 2.2 adds the **arbitrage-free** version
+(AFNS; Christensen, Diebold & Rudebusch, 2011), which ties the curve's shape to
+the volatility of its factors:
 
 | model (re-estimated on past data only) | 1 month | 6 months | 12 months | 80% interval coverage (1 / 6 / 12m) |
 |---|---:|---:|---:|---:|
@@ -114,8 +167,11 @@ model but still loses to no-change:
 | Diebold–Li, VAR(1) factors | 1.089 | 1.018 | 1.028 | – |
 | state-space, VAR(1) | 1.088 | 1.029 | 1.048 | 86% / 79% / 73% |
 | state-space, random-walk level | 1.103 | 1.062 | 1.073 | 85% / 79% / 77% |
+| **AFNS** (arbitrage-free), VAR(1) | 1.073 | 1.040 | 1.049 | 93% / 89% / **86%** |
+| AFNS, independent factors | 1.130 | 1.093 | 1.106 | 83% / 71% / 59% |
 | ½ state-space VAR(1) + ½ random walk | **1.011** | **0.990** | **0.996** | – |
 | ½ Diebold–Li VAR(1) + ½ random walk | 1.013 | 0.994 | 1.002 | – |
+| ½ AFNS VAR(1) + ½ random walk | 1.008 | 0.997 | 1.000 | – |
 
 (RMSE relative to the random walk, averaged over tenors; < 1 beats it.)
 The last two rows are new in 2.1: an equal average of the model and "no
@@ -126,6 +182,14 @@ not a win. The practical lesson is the usual one: shrink model forecasts
 towards "no change".
 The state-space intervals are well calibrated at short horizons and somewhat
 too narrow at 12 months, because they ignore parameter uncertainty.
+
+**What no-arbitrage buys.** AFNS gives the best one-month forecast of any single
+model (1.073) and ties the plain state-space model at 12 months, but it still
+loses to the random walk. Its bigger gain is in the *uncertainty*: 86% of
+12-month outcomes fall inside its 80% intervals, against 73% for the
+unrestricted model, whose intervals are too narrow. CDR found that
+*independent* factors forecast best; here they are the worst specification at
+every horizon, with or without the restriction.
 
 ### Other findings
 
@@ -179,11 +243,12 @@ To reproduce: `nss-engine run --source fred --start 1990-01-01` and
 | **Curves** | Zero, instantaneous forward, discount and par curves in closed form. |
 | **Macro regimes** | The model-implied 10Y−3M slope is classified as Inverted / Flat / Normal / Steep, with hysteresis. It also labels bull/bear steepeners and flatteners, and measures inversion-to-recession lead times. |
 | **Recession model** | A probit on the slope, $P(\text{recession in 12m}) = \Phi(a + b\cdot\text{spread})$ (the NY Fed specification), fitted on NBER data. It is compared with the **near-term forward spread** (Engstrom & Sharpe, 2019) in a **pseudo-real-time** test that only uses recessions known at each date. |
-| **Forecasting** | The Diebold–Li dynamic Nelson–Siegel model, and its **state-space version** (Kalman filter, maximum likelihood, Diebold–Rudebusch–Aruoba 2006), which also gives forecast intervals. Both are evaluated **out of sample** against a random walk. |
+| **Forecasting** | The Diebold–Li dynamic Nelson–Siegel model, and its **state-space version** (Kalman filter, maximum likelihood, Diebold–Rudebusch–Aruoba 2006), optionally **arbitrage-free** (AFNS, Christensen–Diebold–Rudebusch 2011), which also gives forecast intervals. All are evaluated **out of sample** against a random walk. |
+| **Term premium** | The **Adrian–Crump–Moench** (2013) model splits each yield into expected short rates and a term premium, in full sample and in pseudo-real time, compared with **Kim–Wright** and with the same model on the Fed's curve. |
 | **Risk** | Bond pricing off the curve, plus DV01, duration, convexity, key-rate durations and **factor durations** (exposure to level/slope/curvature). |
 | **Relative value** | Rich/cheap residuals, rolling z-scores with no look-ahead, mean-reversion half-lives, and carry and roll-down. |
 | **Validation** | Every run is compared with the **Federal Reserve's own Svensson curve** (Gürkaynak–Sack–Wright). There is also PCA of yield changes against the NSS loadings, and correlations with model-free factor proxies. |
-| **Outputs** | An interactive dashboard (light/dark), a Markdown report, CSV/JSON exports and a CLI. A scheduled GitHub Action rebuilds it all from live data. |
+| **Outputs** | An interactive dashboard (light/dark), a Markdown report, CSV/JSON exports, live-status badges and a CLI. A scheduled GitHub Action rebuilds it all from live data. A [Colab notebook](examples/tour.ipynb) runs the main analyses in a browser. |
 
 ## Quick start
 
@@ -199,7 +264,8 @@ nss-engine run --source synthetic   # offline demo on a simulated market
 
 `nss-engine run` writes `output/dashboard.html` (open it in a browser), plus
 `report.md`, `summary.json`, `nss_parameters.csv`, `fitted_yields.csv`,
-`residuals_bp.csv`, `macro_signals.csv` and `reference_comparison.csv`. Useful
+`residuals_bp.csv`, `macro_signals.csv`, `term_premium.csv`,
+`reference_comparison.csv` and `badges/*.json` (shields.io endpoint badges). Useful
 flags: `--robust` (down-weight bad quotes), `--target yield` (the 1.x behaviour:
 fit zero rates directly to the quotes), `--model ns`, `--start 2000-01-01`,
 `--freq ME` (monthly), `--no-forecast`, `--no-reference` (skip the Fed
@@ -227,6 +293,11 @@ from nss_engine.data import load_gsw_parameters
 compare_to_reference(fit, load_gsw_parameters()).summary()  # vs the Fed's curve, by maturity
 dns = fit_dns(yields.resample("ME").mean())                 # Kalman-filter DNS model
 mean, cov = dns.forecast(12)                                # 12-month predictive distribution
+afns = fit_dns(yields.resample("ME").mean(), arbitrage_free=True)  # no-arbitrage version
+
+from nss_engine import fit_acm, zero_panel
+acm = fit_acm(zero_panel(fit.params))                       # monthly zero curves, 1-120 months
+acm.decomposition(10).tail()                                # yield = expected short rate + term premium
 ```
 
 See [`examples/quickstart.py`](examples/quickstart.py) for risk, carry and uncertainty analytics.
@@ -369,8 +440,11 @@ docs/              methodology and references
 * Constant-maturity yields are interpolated par yields of on-the-run securities,
   not prices of individual bonds. Residuals are a curve-shape signal, not
   directly tradeable mispricings.
-* NSS is a statistical curve, not an arbitrage-free model (see AFNS,
-  Christensen–Diebold–Rudebusch 2011).
+* The cross-sectional NSS fit is a statistical curve, not an arbitrage-free
+  model. The state-space model can impose no-arbitrage (AFNS) and the term
+  premium model is arbitrage-free, but the curves they start from are not.
+* Term premium estimates depend on the model (ACM sits about a point above
+  Kim–Wright) and need decades of data; the real-time estimates are noisy.
 * The recession probit rests on a handful of recessions (four since 1990). Treat
   its probabilities as indicative. The 2022–2024 inversion, for example, was not
   followed by an NBER recession within the usual window.
@@ -385,7 +459,8 @@ with a 3-D Plotly surface. Version 1.0 rebuilt it from the ground up. Version
 2.0 fits the quotes as what they are (par yields), checks the result against the
 Federal Reserve's curve, and adds robust fitting, uncertainty, a state-space
 model and real-time recession tests. Version 2.1 puts error bars on the
-headline comparisons and walks back a claim they did not support. The [CHANGELOG](CHANGELOG.md) lists what
+headline comparisons and walks back a claim they did not support. Version 2.2
+adds the term premium and arbitrage-free dynamics, and a Colab notebook. The [CHANGELOG](CHANGELOG.md) lists what
 was wrong in each version and how it was fixed.
 
 ## References
@@ -393,7 +468,9 @@ was wrong in each version and how it was fixed.
 Nelson & Siegel (1987); Svensson (1994); Diebold & Li (2006); Gilli, Große &
 Schumann (2010); Estrella & Mishkin (1998); Litterman & Scheinkman (1991);
 Diebold & Mariano (1995); Willner (1996); Gürkaynak, Sack & Wright (2007);
-Diebold, Rudebusch & Aruoba (2006); Engstrom & Sharpe (2019); Huber (1964).
+Diebold, Rudebusch & Aruoba (2006); Engstrom & Sharpe (2019); Huber (1964);
+Adrian, Crump & Moench (2013); Christensen, Diebold & Rudebusch (2011); Kim &
+Wright (2005); Rosenberg & Maurer (2008).
 Full citations are in
 [docs/methodology.md](docs/methodology.md#references).
 

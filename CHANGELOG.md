@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.2.0 — term premium, arbitrage-free dynamics, easier to use
+
+### Added
+* **Term premium** (`termpremium.fit_acm`): the Adrian, Crump & Moench (2013)
+  regression-based affine model on the NSS zero curves splits each yield into
+  the average expected short rate and a term premium. On FRED data the 10-year
+  premium tracks the same model run on the Fed's GSW curve with correlation 0.99
+  (RMSE 31 bp) and Kim–Wright with correlation 0.96, about a point higher on
+  average. Report section, dashboard chart and tile, `term_premium.csv`,
+  `--no-term-premium`.
+* **Pseudo-real-time term premium** (`real_time_decomposition`), re-estimated
+  every month on past data only, and recession probits on the expectations and
+  term-premium parts of the 10y−3m spread. On FRED data the real-time
+  premium is noisy (correlation 0.43 with the full-sample estimate after a
+  5-year start, 0.70 after 15), and on the 2006–2026 origins no curve signal
+  beats a coin flip out of sample.
+* **Arbitrage-free Nelson–Siegel** in the state-space model
+  (`fit_dns(arbitrage_free=True)`, Christensen, Diebold & Rudebusch 2011): the
+  yield-adjustment term for any factor covariance, tied to the state shocks, so
+  the restriction adds no parameters; `independent=True` for CDR's diagonal
+  specification. On FRED data AFNS has the best one-month forecast of any
+  single model (1.073 of the random walk's RMSE) and far better calibrated
+  12-month intervals (86% coverage for 80%, against 73%), but still does not
+  beat the random walk; independent factors are the worst specification.
+* **A market with a known term premium** (`synthetic.simulate_affine_market`)
+  for testing: the ACM estimator recovers its risk-neutral dynamics exactly.
+* `data.load_kim_wright_term_premium` (FRED `THREEFYTP1`–`10`).
+* **Colab notebook** (`examples/tour.ipynb`), **live status badges** in
+  shields.io endpoint format next to the dashboard, and `CITATION.cff`.
+
+### Fixed
+* `DNSResult.n_params` counted restricted entries (a diagonal `A`, a
+  random-walk level) as free parameters, overstating the BIC penalty.
+
 ## 2.1.0 — honest error bars, forecast combination, long-end guard
 
 ### Changed (affects results)

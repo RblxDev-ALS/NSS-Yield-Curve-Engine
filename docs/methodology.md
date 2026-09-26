@@ -446,7 +446,11 @@ unchanged; only the split between expectations and premium moves.
 data up to that month (after a 60-month start). With so few months the smallest
 principal components can be pure noise and the risk-neutral dynamics explode at
 long maturities; an estimate that misprices that month's curve by more than
-10 bp on average is discarded (one month in 317 on the synthetic market).
+10 bp on average is discarded (one month in 317 on the synthetic market). On
+FRED data the real-time premium correlates only 0.43 with the full-sample one
+after a 5-year start, 0.58 after 10 years and 0.70 after 15, while the
+stationarity cap binds in 0.3% of months: the noise is statistical, not
+numerical. Where rates revert to takes decades of data to learn.
 
 *Benchmarks.* The Kim & Wright (2005) premium (FRED `THREEFYTP10`), from a
 three-factor affine model fitted with survey forecasts of short rates, and the
