@@ -132,6 +132,7 @@ def test_stationarity_cap_keeps_fitted_yields(affine):
     np.testing.assert_allclose(free.phi - free.lambda1, capped.phi - capped.lambda1, atol=1e-12)
     # ... only the split into expectations and premium moves
     assert not np.allclose(free.term_premium.iloc[:, -1], capped.term_premium.iloc[:, -1])
+    assert capped.var_capped and not free.var_capped
     # a cap above the estimated persistence changes nothing
     loose = fit_acm(affine.yields, n_factors=3, max_eigenvalue=0.9999)
     pd.testing.assert_frame_equal(free.term_premium, loose.term_premium)
@@ -139,4 +140,5 @@ def test_stationarity_cap_keeps_fitted_yields(affine):
 
 def test_real_time_discards_failed_estimates(affine):
     rt = real_time_decomposition(affine.yields.iloc[:80], min_train=70, max_fit_error_bp=-1.0)
-    assert rt.isna().all().all()
+    assert rt[["fitted", "expected_short_rate", "term_premium"]].isna().all().all()
+    assert rt["var_capped"].dtype == bool
