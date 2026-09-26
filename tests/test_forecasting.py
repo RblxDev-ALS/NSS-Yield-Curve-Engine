@@ -82,6 +82,20 @@ def test_evaluate_forecasts_beats_random_walk_on_mean_reverting_curve():
         df, horizons=(6,), min_train=60, rolling_window=120, kind="var1"
     )
     assert rolled.rmse_model.shape == (1, mats.size)
+    # Averaging two forecasts can never do worse than averaging their RMSEs (Minkowski).
+    bound = (ev.rmse_model + ev.rmse_random_walk) / 2
+    assert (ev.rmse_combination <= bound + 1e-9).all().all()
+    np.testing.assert_allclose(
+        ev.relative_rmse_combination, ev.rmse_combination / ev.rmse_random_walk
+    )
+
+
+def test_combination_errors():
+    a, b = [np.array([2.0, -4.0])], [np.array([-2.0, 0.0])]
+    np.testing.assert_array_equal(forecasting.combination_errors(a, b)[0], [0.0, -2.0])
+    ev = forecasting.ForecastEvaluation(*(pd.DataFrame(),) * 4, pd.Series(dtype=float), "ar1")
+    with pytest.raises(ValueError):
+        _ = ev.relative_rmse_combination
 
 
 def test_forecast_curve_shape(long_market):

@@ -42,6 +42,13 @@ class ReferenceComparison:
     def n_dates(self) -> int:
         return len(self.difference_bp)
 
+    def subset(self, dates: pd.Index) -> ReferenceComparison:
+        """The comparison restricted to ``dates`` (e.g. a sub-period)."""
+        keep = self.difference_bp.index.intersection(dates)
+        return ReferenceComparison(
+            self.difference_bp.loc[keep], self.engine.loc[keep], self.reference.loc[keep]
+        )
+
     def summary(self) -> pd.DataFrame:
         """Per measure: mean difference (bias), its std, RMSE, and correlation of changes."""
         d = self.difference_bp

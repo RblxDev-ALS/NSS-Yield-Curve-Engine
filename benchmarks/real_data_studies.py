@@ -115,6 +115,10 @@ def main() -> None:
             CalibrationConfig(lambda_smoothing=DEFAULT_PANEL_SMOOTHING),
             True,
         ),
+        "NSS + λ smoothing, fixed λ2 bound (2.0)": (
+            CalibrationConfig(lambda_smoothing=DEFAULT_PANEL_SMOOTHING, hump_within_data=False),
+            True,
+        ),
         "NSS + λ smoothing, zero target": (
             CalibrationConfig(target="yield", lambda_smoothing=DEFAULT_PANEL_SMOOTHING),
             True,
@@ -141,6 +145,11 @@ def main() -> None:
             )
             rel = ev.relative_rmse
             rows[f"{kind.upper()}, {label}"] = {f"h={h}m": rel.loc[h].mean() for h in rel.index}
+            if window is None:
+                comb = ev.relative_rmse_combination
+                rows[f"½ {kind.upper()} + ½ random walk"] = {
+                    f"h={h}m": comb.loc[h].mean() for h in comb.index
+                }
     fc = pd.DataFrame(rows).T
     fc.index.name = "factor model"
     print(
@@ -166,6 +175,10 @@ def dns_study(core: pd.DataFrame, two_step: pd.DataFrame) -> None:
         )
         rel = ev.relative_rmse
         rows[f"state-space {label}"] = {f"h={h}m": rel.loc[h].mean() for h in rel.index}
+        comb = ev.relative_rmse_combination
+        rows[f"½ state-space {label} + ½ random walk"] = {
+            f"h={h}m": comb.loc[h].mean() for h in comb.index
+        }
         cover[f"state-space {label}"] = {f"h={h}m": ev.coverage.loc[h].mean() for h in rel.index}
     table = pd.concat([two_step, pd.DataFrame(rows).T])
     table.index.name = "model"
@@ -194,13 +207,22 @@ def gsw_study(monthly: pd.DataFrame, reference: pd.DataFrame, source: str) -> No
         "par target + robust": CalibrationConfig(
             lambda_smoothing=DEFAULT_PANEL_SMOOTHING, robust=True
         ),
+        "par target, fixed λ2 bound (2.0)": CalibrationConfig(
+            lambda_smoothing=DEFAULT_PANEL_SMOOTHING, hump_within_data=False
+        ),
     }
-    rows, bias_rows = {}, {}
+    # Months without a 30-year quote (the Treasury suspended the bond 2002-2006):
+    # the fitted long end is an extrapolation from the 20-year.
+    no_long = monthly.index[monthly[monthly.columns.max()].isna()]
+    rows, bias_rows, gap_rows = {}, {}, {}
     for label, cfg in configs.items():
         fit = calibrate_panel(monthly, cfg)
         cmp = compare_to_reference(fit, ref)
         rows[label] = cmp.overall()
         bias_rows[label] = cmp.summary()["bias_bp"]
+        gap = cmp.subset(no_long)
+        if gap.n_dates:
+            gap_rows[label] = gap.summary()["rmse_bp"]
     print(f"\n## Zero curves vs {name}, 1Y-30Y ({int(rows[label]['n_dates'])} month-ends)\n")
     print(
         "RMSE includes any constant offset; 'demeaned' removes each maturity's average gap; "
@@ -209,6 +231,12 @@ def gsw_study(monthly: pd.DataFrame, reference: pd.DataFrame, source: str) -> No
     print(pd.DataFrame(rows).T.drop(columns="n_dates").round(3).to_markdown())
     print("\nAverage gap (engine − reference, bp) by maturity:\n")
     print(pd.DataFrame(bias_rows).T.round(1).to_markdown())
+    if gap_rows:
+        n = len(ref.index.intersection(no_long))
+        print(f"\nRMSE (bp) in the {n} months without a 30-year quote:\n")
+        print(pd.DataFrame(gap_rows).T.round(1).to_markdown())
+    else:
+        print("\n(No month in this sample lacks a 30-year quote.)")
 
 
 if __name__ == "__main__":

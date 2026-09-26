@@ -9,7 +9,10 @@ forecasting the *curve* reduces to forecasting three well-behaved time series::
 This module implements that model and an honest, rolling out-of-sample
 evaluation against the random walk ("no change") - the benchmark that is
 notoriously hard to beat in yield forecasting - including Diebold-Mariano
-tests of equal predictive accuracy.
+tests of equal predictive accuracy. It also scores the equal-weight average of
+the model and the random walk: a combination with no estimated weights, so it
+cannot overfit, and it gains whenever the two make partly offsetting errors
+(Bates & Granger, 1969; Timmermann, 2006).
 """
 
 from __future__ import annotations
@@ -114,11 +117,19 @@ class ForecastEvaluation:
     dm_pvalue: pd.DataFrame  #: two-sided p-value (Harvey-Leybourne-Newbold corrected)
     n_forecasts: pd.Series
     kind: str
+    rmse_combination: pd.DataFrame | None = None  #: RMSE (bp) of ½ model + ½ random walk
 
     @property
     def relative_rmse(self) -> pd.DataFrame:
         """Model RMSE / random-walk RMSE (< 1 means the model wins)."""
         return self.rmse_model / self.rmse_random_walk
+
+    @property
+    def relative_rmse_combination(self) -> pd.DataFrame:
+        """Equal-weight combination RMSE / random-walk RMSE."""
+        if self.rmse_combination is None:
+            raise ValueError("no combination forecasts were evaluated")
+        return self.rmse_combination / self.rmse_random_walk
 
 
 def diebold_mariano(e_model: FloatArray, e_bench: FloatArray, h: int) -> tuple[float, float]:
@@ -190,6 +201,11 @@ def evaluate_forecasts(
 
     rm = pd.DataFrame([rmse(err_m[h]) for h in horizons], index=list(horizons), columns=labels)
     rr = pd.DataFrame([rmse(err_rw[h]) for h in horizons], index=list(horizons), columns=labels)
+    rc = pd.DataFrame(
+        [rmse(combination_errors(err_m[h], err_rw[h])) for h in horizons],
+        index=list(horizons),
+        columns=labels,
+    )
     dm_s = pd.DataFrame(index=list(horizons), columns=labels, dtype=float)
     dm_p = pd.DataFrame(index=list(horizons), columns=labels, dtype=float)
     for h in horizons:
@@ -199,7 +215,17 @@ def evaluate_forecasts(
         for j, lab in enumerate(labels):
             m = np.isfinite(em[:, j]) & np.isfinite(er[:, j])
             dm_s.loc[h, lab], dm_p.loc[h, lab] = diebold_mariano(em[m, j], er[m, j], h)
-    for frame in (rm, rr, dm_s, dm_p):
+    for frame in (rm, rr, rc, dm_s, dm_p):
         frame.index.name = "horizon"
     n = pd.Series({h: len(err_m[h]) for h in horizons}, name="n_forecasts")
-    return ForecastEvaluation(rm, rr, dm_s, dm_p, n, kind)
+    return ForecastEvaluation(rm, rr, dm_s, dm_p, n, kind, rc)
+
+
+def combination_errors(
+    err_model: list[FloatArray], err_random_walk: list[FloatArray]
+) -> list[FloatArray]:
+    """Errors of the forecast ``½ model + ½ random walk``.
+
+    ``y − (ŷ + y_t)/2 = (e_model + e_rw)/2``, so no forecasts need storing.
+    """
+    return [(a + b) / 2.0 for a, b in zip(err_model, err_random_walk, strict=True)]

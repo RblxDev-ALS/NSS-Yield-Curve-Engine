@@ -5,6 +5,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from nss_engine.calibration import (
+    HUMP_PEAK,
     CalibrationConfig,
     _batched_loadings,
     _loading_lambda_derivatives,
@@ -500,3 +501,27 @@ def test_par_fit_with_lambda1_at_its_upper_bound(maturities):
     # ... and match the best par fit with λ1 fixed at that bound
     pinned = calibrate(maturities, true.par_yield(maturities), CalibrationConfig(fixed_lambda1=3.0))
     assert res.loss <= pinned.loss * (1 + 1e-6)
+
+
+class TestHumpWithinData:
+    def test_no_effect_when_the_30y_is_quoted(self, maturities, humped_curve):
+        y = humped_curve.par_yield(maturities) + 0.02 * np.sin(maturities)
+        on = calibrate(maturities, y)
+        off = calibrate(maturities, y, CalibrationConfig(hump_within_data=False))
+        np.testing.assert_array_equal(on.curve.as_array(), off.curve.as_array())
+
+    def test_second_hump_peaks_inside_the_data(self, maturities):
+        """Without the 30Y (as in 2002-2006) the second hump may not peak beyond 20Y."""
+        true = NSSCurve(4.5, -2.0, -1.0, 3.0, 0.9, 0.065)  # second hump peaks at ~28Y
+        tau = maturities[maturities <= 20]
+        y = true.par_yield(tau) + np.array([2, -1, 1, -2, 1, 2, -1, 1, -2, 1])[: tau.size] / 100
+        res = calibrate(tau, y)
+        assert res.success
+        assert res.curve.lambda2 >= HUMP_PEAK / 20 * (1 - 1e-9)
+        free = calibrate(tau, y, CalibrationConfig(hump_within_data=False))
+        assert free.loss <= res.loss * (1 + 1e-9)  # the bound can only cost in-sample fit
+
+    def test_hump_peak_constant(self):
+        x = np.linspace(1.0, 3.0, 200_001)
+        loading = (1 - np.exp(-x)) / x - np.exp(-x)
+        assert x[np.argmax(loading)] == pytest.approx(HUMP_PEAK, abs=1e-4)
