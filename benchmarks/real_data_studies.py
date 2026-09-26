@@ -51,7 +51,12 @@ from nss_engine.data import (
 from nss_engine.forecasting import evaluate_forecasts
 from nss_engine.statespace import evaluate_dns_forecasts
 from nss_engine.synthetic import simulate_market
-from nss_engine.termpremium import compare_term_premia, fit_acm, zero_panel
+from nss_engine.termpremium import (
+    compare_term_premia,
+    fit_acm,
+    real_time_decomposition,
+    zero_panel,
+)
 from nss_engine.validation import compare_to_reference
 
 INTERIOR = (0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 20.0)
@@ -203,12 +208,30 @@ def term_premium_study(monthly: pd.DataFrame, reference: pd.DataFrame | None) ->
             }
     table = pd.DataFrame(rows).T.drop(columns="n_months")
     table.index.names = ["curve", "factors"]
+    rt_rows = {}
+    nss = curves["NSS curves (this engine)"]
+    full = fit_acm(nss).decomposition(10)["term_premium"]
+    for min_train in (60, 120, 180):
+        rt = real_time_decomposition(nss, 10.0, min_train=min_train)
+        tp = rt["term_premium"].dropna()
+        vs_kw = compare_term_premia(tp, kw)
+        rt_rows[f"start after {min_train} months"] = {
+            "first estimate": f"{tp.index[0]:%Y-%m}",
+            "corr with full sample": float(tp.corr(full.reindex(tp.index))),
+            "corr with Kim-Wright": vs_kw["corr_level"],
+            "RMSE vs Kim-Wright (bp)": vs_kw["rmse_bp"],
+            "sd (%)": float(tp.std()),
+            "share VAR capped": float(rt["var_capped"].mean()),
+            "discarded": int(rt["term_premium"].isna().sum()),
+        }
     print("\n## Term premium (ACM, 10-year) vs Kim-Wright\n")
     print(
         "Correlation of monthly levels and 12-month changes, RMSE and mean gap "
         "(ACM − Kim-Wright, bp). ACM's own choice is 5 factors on the Fed's curve.\n"
     )
     print(table.round(3).to_markdown())
+    print("\nPseudo-real-time 10-year premium (5 factors, NSS curves, re-estimated monthly):\n")
+    print(pd.DataFrame(rt_rows).T.to_markdown(floatfmt=".3f"))
 
 
 def dns_study(core: pd.DataFrame, two_step: pd.DataFrame) -> None:

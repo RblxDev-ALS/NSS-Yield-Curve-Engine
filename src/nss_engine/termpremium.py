@@ -77,6 +77,7 @@ class ACMResult:
     delta1: FloatArray  #: short rate loadings (K)
     sigma_e: float  #: pricing-error standard deviation of excess returns (monthly)
     return_maturities: tuple[int, ...]
+    var_capped: bool = False  #: the real-world VAR was scaled back to stationarity
 
     @property
     def term_premium(self) -> pd.DataFrame:
@@ -233,7 +234,8 @@ def fit_acm(
 
     # ---- keep the real-world VAR stationary (fitted yields unchanged) ---------------
     rho = float(np.max(np.abs(np.linalg.eigvals(phi))))
-    if max_eigenvalue is not None and rho > max_eigenvalue:
+    capped = max_eigenvalue is not None and rho > max_eigenvalue
+    if max_eigenvalue is not None and capped:
         mu_q, phi_q = mu - lambda0, phi - lambda1
         phi = phi * (max_eigenvalue / rho)
         mu = (np.eye(k) - phi) @ X.mean(axis=0)
@@ -264,6 +266,7 @@ def fit_acm(
         delta1=delta1,
         sigma_e=float(np.sqrt(sigma2)),
         return_maturities=ret_mats,
+        var_capped=bool(capped),
     )
 
 
@@ -320,7 +323,8 @@ def real_time_decomposition(
 
     Returns, for each month from ``min_train`` on, the latest ``fitted``,
     ``expected_short_rate`` and ``term_premium`` for ``maturity`` that the
-    model estimated *at the time*. A full-sample estimate uses the future to
+    model estimated *at the time*, and whether the stationarity cap bound
+    (``var_capped``). A full-sample estimate uses the future to
     split past yields; this version does not, so it can be used to evaluate
     forecasts honestly.
 
@@ -338,9 +342,13 @@ def real_time_decomposition(
         rows[zero_yields.index[t]] = (
             res.fitted.iloc[-1, j] if ok else np.nan,
             res.risk_neutral.iloc[-1, j] if ok else np.nan,
+            res.var_capped,
         )
-    out = pd.DataFrame.from_dict(rows, orient="index", columns=["fitted", "expected_short_rate"])
+    out = pd.DataFrame.from_dict(
+        rows, orient="index", columns=["fitted", "expected_short_rate", "var_capped"]
+    )
     out["term_premium"] = out["fitted"] - out["expected_short_rate"]
+    out = out[["fitted", "expected_short_rate", "term_premium", "var_capped"]]
     out.index.name = zero_yields.index.name
     return out
 

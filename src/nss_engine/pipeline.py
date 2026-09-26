@@ -552,7 +552,13 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
             "model": "Adrian-Crump-Moench (2013), 5 principal components",
             "maturity_years": 10,
             "latest": dec.to_dict(),
-            "latest_real_time": r.term_premium_real_time.iloc[-1].to_dict()
+            "latest_real_time": r.term_premium_real_time.iloc[-1]
+            .drop("var_capped")
+            .astype(float)
+            .to_dict()
+            if r.term_premium_real_time is not None
+            else None,
+            "real_time_share_var_capped": float(r.term_premium_real_time["var_capped"].mean())
             if r.term_premium_real_time is not None
             else None,
             "real_time_months_discarded": int(r.term_premium_real_time["fitted"].isna().sum())
