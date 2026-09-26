@@ -556,6 +556,87 @@ def fig_dns_forecast(r: PipelineResult) -> go.Figure | None:
     return fig
 
 
+def fig_term_premium(r: PipelineResult) -> go.Figure | None:
+    """10-year yield split into expected short rates and term premium, with benchmarks."""
+    if r.acm is None:
+        return None
+    dec = r.acm.decomposition(10)
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.5, 0.5],
+        subplot_titles=(
+            "10-year zero yield = expected short rate + term premium",
+            "10-year term premium: this engine vs other estimates",
+        ),
+    )
+    fig.add_scatter(
+        x=dec.index,
+        y=dec["fitted"],
+        name="10Y zero yield",
+        line=dict(color=INK_2, width=1.8),
+        hovertemplate="%{y:.2f}%",
+        row=1,
+        col=1,
+    )
+    fig.add_scatter(
+        x=dec.index,
+        y=dec["expected_short_rate"],
+        name="Expected short rate (10y avg)",
+        line=dict(color=SERIES[0], width=1.8),
+        hovertemplate="%{y:.2f}%",
+        row=1,
+        col=1,
+    )
+    fig.add_scatter(
+        x=dec.index,
+        y=dec["term_premium"],
+        name="Term premium (ACM on NSS curves)",
+        line=dict(color=SERIES[1], width=2.2),
+        hovertemplate="%{y:+.2f}%",
+        row=2,
+        col=1,
+    )
+    if r.term_premium_real_time is not None:
+        rt = r.term_premium_real_time["term_premium"]
+        fig.add_scatter(
+            x=rt.index,
+            y=rt,
+            name="…estimated in real time",
+            line=dict(color=SERIES[1], width=1.4, dash="dot"),
+            hovertemplate="%{y:+.2f}%",
+            row=2,
+            col=1,
+        )
+    for i, (name, series) in enumerate(r.term_premium_benchmarks.items()):
+        monthly = series.resample("ME").mean().loc[dec.index[0] :]
+        fig.add_scatter(
+            x=monthly.index,
+            y=monthly,
+            name=name,
+            line=dict(color=SERIES[2 + i], width=1.6),
+            hovertemplate="%{y:+.2f}%",
+            row=2,
+            col=1,
+        )
+    fig.add_hline(y=0, line=dict(color=AXIS, width=1), row=2, col=1)
+    for row in (1, 2):
+        _add_recessions(fig, r.recession, dec.index[0], row=row)
+    fig.update_yaxes(title="%", row=1, col=1)
+    fig.update_yaxes(title="%", row=2, col=1)
+    fig.update_layout(
+        template=_TEMPLATE,
+        height=620,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="top", y=-0.08, xanchor="left", x=0),
+        margin=dict(t=60, b=110),
+    )
+    fig.update_annotations(font=dict(size=13, color=INK_2))
+    return fig
+
+
 def fig_fit_quality(r: PipelineResult) -> go.Figure:
     d = r.fit.diagnostics
     roll = d["rmse_bp"].rolling(13, min_periods=1).median()
@@ -841,6 +922,16 @@ def build_dashboard(
             ),
         )
 
+    if r.acm is not None:
+        tp_latest = s["term_premium"]["latest"]
+        tiles.append(
+            _tile(
+                "10Y term premium",
+                f"{tp_latest['term_premium']:+.2f}%",
+                f"expected short rate {tp_latest['expected_short_rate']:.2f}%",
+            )
+        )
+
     obs = r.yields.iloc[-1]
     today = pd.DataFrame(
         {
@@ -906,6 +997,44 @@ def build_dashboard(
             + "</details>"
         )
 
+    tp_section = ""
+    if r.acm is not None:
+        tp = s["term_premium"]["latest"]
+        tp_tables = ""
+        if r.term_premium_comparison is not None:
+            cmp = r.term_premium_comparison.copy()
+            cmp.index = [f"{e} vs {b}" for e, b in cmp.index]
+            cmp.columns = [
+                "corr (level)",
+                "corr (12m change)",
+                "RMSE (bp)",
+                "mean gap (bp)",
+                "months",
+            ]
+            tp_tables += (
+                "<details><summary>Agreement with other estimates</summary>"
+                + _table_html(cmp, "{:.2f}")
+                + "</details>"
+            )
+        if r.term_premium_recession is not None:
+            rc = r.term_premium_recession[
+                ["auc_in_sample", "auc_out_of_sample", "brier_out_of_sample", "latest_probability"]
+            ]
+            tp_tables += (
+                "<details><summary>Which part of the slope predicts recessions?</summary>"
+                + _table_html(rc, "{:.3f}")
+                + "</details>"
+            )
+        tp_section = (
+            "<section><h2>Expected rates vs term premium</h2>"
+            "<p>A 10-year yield is the average short rate investors expect over the next decade plus a "
+            "<em>term premium</em>, the extra return demanded for holding a long bond. The "
+            "Adrian-Crump-Moench model (the method behind the New York Fed's published premium) "
+            f"separates the two. Latest: {tp['fitted']:.2f}% = {tp['expected_short_rate']:.2f}% "
+            f"expected {'+' if tp['term_premium'] >= 0 else '−'} {abs(tp['term_premium']):.2f}% term premium.</p>"
+            f"{embed(fig_term_premium(r))}{tp_tables}</section>"
+        )
+
     ref_section = ""
     if r.reference is not None:
         ov = s["reference_curve"]
@@ -962,6 +1091,8 @@ Fed funds rate off the NSS forward curve: below zero, cuts are priced in.</p>
 {embed(fig_pca(r))}
 <details><summary>Correlation with model-free proxies</summary>{_table_html(r.proxy_correlations, "{:.3f}")}</details>
 </section>
+
+{tp_section}
 
 {ref_section}
 

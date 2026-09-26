@@ -80,6 +80,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         calibration=_calibration_config(args),
         run_forecasts=not args.no_forecast,
         reference_curve=not args.no_reference,
+        term_premium=not args.no_term_premium,
     )
     t0 = time.perf_counter()
     result = run_pipeline(
@@ -94,9 +95,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     if "recession_model" in s:
         print(f"Recession probability (12m): {s['recession_model']['latest_probability']:.1%}")
+    if "term_premium" in s:
+        tp = s["term_premium"]["latest"]
+        print(
+            f"10Y zero yield {tp['fitted']:.2f}% = expected short rate "
+            f"{tp['expected_short_rate']:.2f}% + term premium {tp['term_premium']:+.2f}%"
+        )
     print("\nOutputs:")
     for name, path in paths.items():
-        print(f"  {name:<11} {path}")
+        print(f"  {name:<13} {path}")
     if args.print_report:
         print("\n" + paths["report"].read_text())
     return 0
@@ -161,6 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--out", default="output", help="output directory (default ./output)")
     p_run.add_argument("--no-dashboard", action="store_true", help="skip the HTML dashboard")
     p_run.add_argument("--no-forecast", action="store_true", help="skip the forecast evaluation")
+    p_run.add_argument(
+        "--no-term-premium",
+        action="store_true",
+        help="skip the term premium decomposition (ACM model)",
+    )
     p_run.add_argument(
         "--no-reference",
         action="store_true",

@@ -296,6 +296,28 @@ def load_recession_indicator(
     return s
 
 
+def load_kim_wright_term_premium(
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    maturity: int = 10,
+    **fetch_kwargs: object,
+) -> pd.Series:
+    """Kim & Wright (2005) term premium on a zero-coupon bond, percent (daily).
+
+    The Federal Reserve Board's estimate from a three-factor affine model fitted
+    to the Treasury curve and survey forecasts of short rates, published on FRED
+    as ``THREEFYTP1`` … ``THREEFYTP10`` (the number is the maturity in years).
+    It is an independent benchmark for :mod:`nss_engine.termpremium`.
+    """
+    if not 1 <= maturity <= 10:
+        raise ValueError("Kim-Wright term premia exist for maturities 1 to 10 years")
+    sid = f"THREEFYTP{maturity}"
+    s = fetch_fred_series(sid, **fetch_kwargs)  # type: ignore[arg-type]
+    s = s.loc[slice(start, end)].dropna()
+    s.name = f"kim_wright_tp{maturity}"
+    return s
+
+
 # =============================================================================
 # Federal Reserve (Gürkaynak-Sack-Wright) Svensson curve
 # =============================================================================

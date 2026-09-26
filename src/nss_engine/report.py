@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -239,6 +240,9 @@ def render_markdown(r: PipelineResult) -> str:
         )
         add("")
 
+    if r.acm is not None:
+        _term_premium_section(r, add)
+
     add("## Factor validation")
     add("")
     ev = r.pca.explained_variance_ratio
@@ -327,3 +331,48 @@ def render_markdown(r: PipelineResult) -> str:
     add(_table(risk, ".3f"))
     add("")
     return "\n".join(lines)
+
+
+def _term_premium_section(r: PipelineResult, emit: Callable[[str], None]) -> None:
+    """Term premium decomposition: latest split, benchmarks, recession test."""
+    assert r.acm is not None
+    tp = r.summary["term_premium"]
+    latest = tp["latest"]
+    emit("## Term premium (Adrian-Crump-Moench)")
+    emit("")
+    emit(
+        "A 10-year yield is the average short rate investors expect over ten years plus a "
+        "**term premium**, the extra return demanded for holding a long bond. The ACM model "
+        "(five principal components of the NSS zero curves, 1-120 months) separates the two "
+        "using only regressions."
+    )
+    emit("")
+    emit(
+        f"**Latest 10Y zero yield {latest['fitted']:.2f}% = expected short rate "
+        f"{latest['expected_short_rate']:.2f}% + term premium {latest['term_premium']:+.2f}%.** "
+        f"Sample range of the premium: {tp['min']:+.2f}% ({tp['min_date']}) to "
+        f"{tp['max']:+.2f}% ({tp['max_date']}); model fitting error {tp['fit_rmse_bp_mean']:.1f} bp."
+    )
+    emit("")
+    if r.term_premium_comparison is not None:
+        cmp = r.term_premium_comparison.copy()
+        cmp.index = [f"{e} vs {b}" for e, b in cmp.index]
+        cmp.index.name = "10-year term premium"
+        emit("Agreement with other estimates (monthly):")
+        emit("")
+        emit(_table(cmp, ".2f"))
+        emit("")
+    if r.term_premium_recession is not None:
+        rc = r.term_premium_recession
+        emit("### Which part of the slope predicts recessions?")
+        emit("")
+        emit(
+            "The spread is split into its expectations component (spread minus the 10-year "
+            "term premium) and the term premium itself, both estimated in real time. "
+            f"Pseudo-real-time probits, {int(rc['n_forecasts'].iloc[0])} common forecast months."
+        )
+        emit("")
+        cols = ["auc_in_sample", "auc_out_of_sample", "brier_out_of_sample"]
+        cols += ["log_score_out_of_sample", "latest_probability"]
+        emit(_table(rc[cols], ".3f"))
+        emit("")

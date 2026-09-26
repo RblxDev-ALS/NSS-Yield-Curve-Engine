@@ -144,3 +144,65 @@ def _stylised_recessions(
         start_pos = monthly.index.get_loc(trig) - (min_inversion_months - 1) + lag_months
         rec.iloc[start_pos : start_pos + length_months] = 1
     return rec
+
+
+# =============================================================================
+# An arbitrage-free affine market with a known term premium
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class AffineMarket:
+    """Output of :func:`simulate_affine_market`."""
+
+    yields: pd.DataFrame  #: zero yields (percent), columns 1/12 … max_months/12 years
+    term_premium: pd.DataFrame  #: true term premium (percent), same shape
+    factors: pd.DataFrame  #: true state variables
+
+
+def simulate_affine_market(
+    periods: int = 600,
+    seed: int = 0,
+    noise_bp: float = 0.0,
+    max_months: int = 120,
+    start: str = "1970-01-31",
+) -> AffineMarket:
+    """Simulate a monthly three-factor Gaussian affine term structure model.
+
+    The factors are a level, a slope and a curvature (in percent); the short
+    rate is level + slope, and curvature feeds into the slope, so all three
+    move yields. Prices of risk ``λ_t = λ0 + λ1 X_t`` are set so that the
+    10-year term premium averages about 0.9 points and moves with the slope, as
+    in U.S. data. Because the true risk-neutral yields are known, the term
+    premium estimated by :func:`~nss_engine.termpremium.fit_acm` can be
+    checked against the truth.
+    """
+    from .termpremium import affine_loadings
+
+    rng = np.random.default_rng(seed)
+    phi = np.array([[0.97, 0.0, 0.0], [0.0, 0.93, 0.06], [0.0, 0.0, 0.85]])
+    mean = np.array([5.0, -1.5, 0.0])
+    mu = (np.eye(3) - phi) @ mean
+    chol = np.diag([0.25, 0.30, 0.40])
+    delta1 = np.array([1.0, 1.0, 0.0]) / 1200.0
+    lambda0 = np.array([-0.13, 0.0, 0.0])
+    lambda1 = np.zeros((3, 3))
+    lambda1[0, 1] = -0.06
+    X = np.empty((periods, 3))
+    X[0] = mean
+    for t in range(1, periods):
+        X[t] = mu + phi @ X[t - 1] + chol @ rng.standard_normal(3)
+    sigma = chol @ chol.T
+    A, B = affine_loadings(max_months, mu - lambda0, phi - lambda1, sigma, 0.0, 0.0, delta1)
+    A_rn, B_rn = affine_loadings(max_months, mu, phi, sigma, 0.0, 0.0, delta1)
+    n = np.arange(1, max_months + 1)
+    fitted = -(A + X @ B.T) / n * 1200.0
+    risk_neutral = -(A_rn + X @ B_rn.T) / n * 1200.0
+    index = pd.date_range(start=start, periods=periods, freq="ME", name="date")
+    cols = n / 12.0
+    noisy = fitted + rng.normal(0.0, noise_bp / 100.0, fitted.shape)
+    return AffineMarket(
+        yields=pd.DataFrame(noisy, index=index, columns=cols),
+        term_premium=pd.DataFrame(fitted - risk_neutral, index=index, columns=cols),
+        factors=pd.DataFrame(X, index=index, columns=["level", "slope", "curvature"]),
+    )

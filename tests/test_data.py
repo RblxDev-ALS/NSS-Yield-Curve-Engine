@@ -177,3 +177,19 @@ def test_label_and_describe(small_market):
     assert "10Y" in labelled.columns and "1M" in labelled.columns
     desc = describe_panel(small_market.yields)
     assert desc.loc["1M", "obs"] < desc.loc["10Y", "obs"]  # 1M blanked before 2001
+
+
+def test_load_kim_wright_term_premium(monkeypatch):
+    calls = []
+
+    def fake(series_id, **kwargs):
+        calls.append(series_id)
+        idx = pd.to_datetime(["2019-12-31", "2020-01-02", "2020-01-03"])
+        return pd.Series([0.5, np.nan, 0.4], index=idx)
+
+    monkeypatch.setattr(data, "fetch_fred_series", fake)
+    s = data.load_kim_wright_term_premium(start="2020-01-01", maturity=5)
+    assert calls == ["THREEFYTP5"]
+    assert s.name == "kim_wright_tp5" and list(s) == [0.4]
+    with pytest.raises(ValueError):
+        data.load_kim_wright_term_premium(maturity=30)

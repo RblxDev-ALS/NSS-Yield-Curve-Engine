@@ -59,6 +59,18 @@ def test_pipeline_result(result):
     }
     lo, hi = result.latest_fit.confidence_band([2, 10])
     assert np.all(hi - lo > 0)
+    tp = s["term_premium"]
+    latest = tp["latest"]
+    assert latest["fitted"] == pytest.approx(
+        latest["expected_short_rate"] + latest["term_premium"], abs=1e-4
+    )
+    assert tp["fit_rmse_bp_mean"] < 5
+    assert tp["real_time_months_discarded"] <= 3
+    assert result.term_premium_real_time is not None
+    assert result.term_premium_real_time.index[0] > result.acm.fitted.index[0]
+    assert {"10Y−3M spread", "expectations component", "term premium"} <= set(
+        s["term_premium_recession_predictors"]
+    )
     json.dumps(s)  # fully serialisable
 
 
@@ -75,6 +87,9 @@ def test_write_outputs(result, tmp_path):
     assert "Validation against the true curve" in report and "zero_95ci_bp" in report
     assert "pseudo-real time" in report and "State-space dynamic Nelson-Siegel" in report
     assert paths["outliers"].exists() and paths["reference"].exists()
+    assert "Term premium (Adrian-Crump-Moench)" in report
+    tp = pd.read_csv(paths["term_premium"], index_col=0)
+    assert {"expected_short_rate", "term_premium", "term_premium_real_time"} <= set(tp.columns)
     html = paths["dashboard"].read_text()
     assert html.count("plotly-graph-div") >= 8
     assert 'src="https://cdn.plot.ly' in html  # default: load plotly.js from the CDN
@@ -119,6 +134,29 @@ def test_gsw_reference_for_fred_source(monkeypatch, small_market):
     assert pipeline._reference_params(cfg, None) == (None, None)
     r = run_pipeline(cfg, data=(small_market.yields.iloc[:30], None, None))
     assert r.reference is None and "reference_curve" not in r.summary
+
+
+def test_term_premium_benchmarks_for_fred_source(monkeypatch, long_market):
+    from nss_engine import pipeline
+
+    monthly = long_market.yields.resample("ME").last()
+    truth = long_market.true_params
+    kw = pd.Series(np.linspace(2.0, 0.0, len(truth)), index=truth.index, name="kim_wright_tp10")
+    monkeypatch.setattr(pipeline, "load_gsw_parameters", lambda *a, **k: truth)
+    monkeypatch.setattr(pipeline, "load_kim_wright_term_premium", lambda *a, **k: kw)
+    cfg = PipelineConfig(source="fred", freq="ME", run_forecasts=False)
+    r = run_pipeline(cfg, data=(monthly, None, None))
+    assert set(r.term_premium_benchmarks) == {
+        "Kim-Wright (Fed Board)",
+        "ACM on the Fed's GSW curve",
+    }
+    cmp = r.term_premium_comparison
+    assert len(cmp) == 4  # (full sample, real time) x (two benchmarks)
+    # the engine's curves are close to the "Fed" curve here, so the premia agree
+    row = cmp.loc[("ACM on NSS curves (full sample)", "ACM on the Fed's GSW curve")]
+    assert row["corr_level"] > 0.9
+    assert r.term_premium_recession is None  # no recession data
+    assert "benchmarks" in r.summary["term_premium"]
 
 
 def test_csv_source(tmp_path, small_market):
