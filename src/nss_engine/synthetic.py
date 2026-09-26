@@ -173,7 +173,8 @@ def simulate_affine_market(
     rate is level + slope, and curvature feeds into the slope, so all three
     move yields. Prices of risk ``λ_t = λ0 + λ1 X_t`` are set so that the
     10-year term premium averages about 0.9 points and moves with the slope, as
-    in U.S. data. Because the true risk-neutral yields are known, the term
+    in U.S. data. Samples too long for pandas timestamps (past the year 2262)
+    get a plain integer index. Because the true risk-neutral yields are known, the term
     premium estimated by :func:`~nss_engine.termpremium.fit_acm` can be
     checked against the truth.
     """
@@ -198,7 +199,10 @@ def simulate_affine_market(
     n = np.arange(1, max_months + 1)
     fitted = -(A + X @ B.T) / n * 1200.0
     risk_neutral = -(A_rn + X @ B_rn.T) / n * 1200.0
-    index = pd.date_range(start=start, periods=periods, freq="ME", name="date")
+    try:
+        index: pd.Index = pd.date_range(start=start, periods=periods, freq="ME", name="date")
+    except (pd.errors.OutOfBoundsDatetime, OverflowError):
+        index = pd.RangeIndex(periods, name="month")  # samples longer than pandas' dates
     cols = n / 12.0
     noisy = fitted + rng.normal(0.0, noise_bp / 100.0, fitted.shape)
     return AffineMarket(

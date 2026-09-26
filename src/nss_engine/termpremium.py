@@ -300,7 +300,7 @@ def affine_loadings(
     for i in range(n_max):
         # the (n-1)-month bond is cash when n = 1: no return, so no pricing error
         err = sigma2 if i > 0 else 0.0
-        a_prev = a_prev + b_prev @ mu_q + 0.5 * (b_prev @ sigma @ b_prev + err) - delta0
+        a_prev = a_prev + float(b_prev @ mu_q + 0.5 * (b_prev @ sigma @ b_prev + err)) - delta0
         b_prev = phi_q.T @ b_prev - delta1
         A[i], B[i] = a_prev, b_prev
     return A, B
