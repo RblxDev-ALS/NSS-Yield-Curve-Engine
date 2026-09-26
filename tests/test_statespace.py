@@ -140,3 +140,129 @@ def test_measurement_noise_has_a_floor(fitted):
     theta = tr.pack(fitted.params)
     theta[-MATS.size :] = -50.0  # push every noise sd towards zero
     assert np.all(tr.unpack(theta).h >= _H_FLOOR)
+
+
+# ---------------------------------------------------------------------------
+# Arbitrage-free Nelson-Siegel (Christensen, Diebold & Rudebusch, 2011)
+# ---------------------------------------------------------------------------
+
+
+def cdr_closed_form(tau, lam, s1, s2, s3):
+    """CDR (2011) yield adjustment C(τ)/τ for independent factors (their eq. 23)."""
+    t, L = np.asarray(tau, dtype=float), lam
+    e1, e2 = np.exp(-L * t), np.exp(-2 * L * t)
+    a = s1**2 * t**2 / 6
+    b = s2**2 * (1 / (2 * L**2) - (1 - e1) / (L**3 * t) + (1 - e2) / (4 * L**3 * t))
+    c = s3**2 * (
+        1 / (2 * L**2)
+        + e1 / L**2
+        - t * e2 / (4 * L)
+        - 3 * e2 / (4 * L**2)
+        - 2 * (1 - e1) / (L**3 * t)
+        + 5 * (1 - e2) / (8 * L**3 * t)
+    )
+    return a + b + c
+
+
+def test_afns_adjustment_matches_cdr_closed_form():
+    from nss_engine.statespace import afns_yield_adjustment
+
+    tau = np.array([0.25, 1, 2, 5, 10, 20, 30])
+    s = (0.006, 0.01, 0.025)
+    ours = afns_yield_adjustment(tau, 0.6, np.diag(np.square(s)))
+    np.testing.assert_allclose(ours, cdr_closed_form(tau, 0.6, *s), rtol=1e-10)
+    assert np.all(np.diff(ours) > 0)  # grows with maturity
+
+
+def test_afns_yields_are_arbitrage_free_bond_prices():
+    """Price zero-coupon bonds exactly under the AFNS risk-neutral diffusion.
+
+    dX = −K X dt + Σ dW with K = [[0,0,0],[0,λ,−λ],[0,0,λ]] and r = X1 + X2.
+    With Y_t = ∫ r ds appended to the state, E[Y_τ] and Var(Y_τ) follow from a
+    matrix exponential (Van Loan, 1978), and −log P(τ)/τ = (E[Y_τ] − ½Var)/τ.
+    That must equal the Nelson-Siegel yield minus the adjustment term.
+    """
+    from scipy.linalg import expm
+
+    from nss_engine.statespace import afns_yield_adjustment
+
+    lam = 0.5
+    K = np.array([[0.0, 0.0, 0.0], [0.0, lam, -lam], [0.0, 0.0, lam]])
+    chol = np.array([[0.008, 0.0, 0.0], [0.004, 0.012, 0.0], [-0.003, 0.006, 0.02]])
+    omega = chol @ chol.T
+    x0 = np.array([0.045, -0.02, 0.01])
+    A = np.zeros((4, 4))
+    A[:3, :3] = -K
+    A[3, :2] = 1.0
+    BBt = np.zeros((4, 4))
+    BBt[:3, :3] = omega
+    for tau in (0.5, 2.0, 10.0, 30.0):
+        mean = expm(A * tau) @ np.append(x0, 0.0)
+        C = np.block([[-A, BBt], [np.zeros((4, 4)), A.T]]) * tau
+        E = expm(C)
+        var = E[4:, 4:].T @ E[:4, 4:]
+        exact = (mean[3] - 0.5 * var[3, 3]) / tau
+        model = ns_loadings([tau], lam)[0] @ x0 - afns_yield_adjustment([tau], lam, omega)[0]
+        assert exact == pytest.approx(model, abs=1e-12)
+
+
+def test_afns_intercept_units():
+    # Q in %² per month; Σ = 1%/√year on the level alone gives τ²/6 · 1e-4 (decimal)
+    p = DNSParameters(
+        lam=0.6,
+        mu=np.zeros(3),
+        A=np.eye(3) * 0.9,
+        Q=np.diag([1.0 / 12, 1e-12, 1e-12]),
+        h=np.full(2, 0.05),
+        arbitrage_free=True,
+    )
+    adj = p.intercept([10.0, 30.0])
+    np.testing.assert_allclose(adj, -np.array([100, 900]) / 6 * 1e-4 * 100, rtol=1e-6)
+    assert np.all(
+        DNSParameters(0.6, np.zeros(3), np.eye(3), np.eye(3), np.ones(2)).intercept([1, 2]) == 0
+    )
+
+
+AFNS_TRUE = DNSParameters(
+    lam=0.6,
+    mu=TRUE.mu,
+    A=TRUE.A,
+    Q=np.diag([0.3, 0.35, 0.6]) ** 2,
+    h=np.full(MATS.size, 0.05),
+    arbitrage_free=True,
+)
+
+
+def test_afns_filter_equals_dns_filter_on_adjusted_yields():
+    y = simulate(TRUE, 120, seed=4).to_numpy()
+    shifted = y + AFNS_TRUE.intercept(MATS)[None, :]
+    plain = DNSParameters(AFNS_TRUE.lam, AFNS_TRUE.mu, AFNS_TRUE.A, AFNS_TRUE.Q, AFNS_TRUE.h)
+    a = kalman_filter(shifted, MATS, AFNS_TRUE)
+    b = kalman_filter(y, MATS, plain)
+    assert a.loglik == pytest.approx(b.loglik, rel=1e-12)
+    np.testing.assert_allclose(a.filtered, b.filtered, atol=1e-10)
+
+
+def test_afns_mle_recovers_parameters_and_beats_dns():
+    base = simulate(AFNS_TRUE, 360, seed=5)
+    y = base + AFNS_TRUE.intercept(MATS)[None, :]  # simulate() omits the intercept
+    afns = fit_dns(y, arbitrage_free=True)
+    dns = fit_dns(y)
+    assert afns.params.arbitrage_free and not dns.params.arbitrage_free
+    assert afns.params.lam == pytest.approx(0.6, rel=0.1)
+    adj30 = afns.params.intercept([30.0])[0]
+    assert adj30 == pytest.approx(AFNS_TRUE.intercept([30.0])[0], rel=0.35)
+    assert afns.loglik > dns.loglik
+    assert afns.n_params == dns.n_params  # the restriction adds no parameters
+    mean, _ = afns.forecast(1)
+    assert np.all(np.isfinite(mean))
+    assert "yield adjustment 30Y (bp)" in afns.summary().index
+
+
+def test_independent_factors():
+    y = simulate(TRUE, 240, seed=6)
+    res = fit_dns(y, arbitrage_free=True, independent=True)
+    Q, A = res.params.Q, res.params.A
+    assert np.count_nonzero(Q - np.diag(np.diag(Q))) == 0
+    assert np.count_nonzero(A - np.diag(np.diag(A))) == 0
+    assert res.n_params == 1 + 3 + 3 + 3 + MATS.size

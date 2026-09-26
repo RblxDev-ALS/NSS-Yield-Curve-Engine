@@ -26,6 +26,28 @@ many maturities are observed.
 no mean reversion). The level of U.S. rates is close to a unit root and a
 mean-reverting level pulls forecasts toward the sample mean - one reason
 Diebold-Li forecasts lose to the random walk after 2000.
+
+Arbitrage-free Nelson-Siegel (AFNS)
+-----------------------------------
+The dynamic Nelson-Siegel model is not free of arbitrage: its factor dynamics
+and its loadings are chosen separately. Christensen, Diebold & Rudebusch
+(2011) show that one small change makes it arbitrage-free. If the factors
+follow a Gaussian diffusion with volatility ``Σ`` and a particular
+risk-neutral drift, bond yields have **exactly** the Nelson-Siegel loadings
+plus a maturity-dependent constant::
+
+    y_t(τ) = Λ(λ) f_t − C(τ)/τ,     C(τ)/τ = 1/(2τ) ∫₀^τ b(u)ᵀ ΣΣᵀ b(u) du
+    b(u) = (u, (1 − e^{−λu})/λ, (1 − e^{−λu})/λ − u e^{−λu})
+
+The *yield-adjustment term* ``C(τ)/τ`` is a convexity effect: volatile rates
+make long bonds worth more, so their yields sit below what the loadings say.
+It is negligible at short maturities and grows roughly with ``τ²`` (a few basis
+points at 10 years, tens at 30). With ``arbitrage_free=True`` the state-space
+model subtracts it from the measurement equation, with ``ΣΣᵀ`` taken from the
+state innovation covariance (``Q / Δt``), so the cross-section and the
+dynamics are estimated consistently. CDR find the AFNS restriction improves
+forecasts, especially with independent factors (``independent=True``:
+diagonal ``A`` and ``Q``).
 """
 
 from __future__ import annotations
@@ -56,9 +78,49 @@ class DNSParameters:
     A: FloatArray  #: 3 × 3 transition matrix
     Q: FloatArray  #: 3 × 3 state innovation covariance
     h: FloatArray  #: measurement noise standard deviations (percent), one per maturity
+    arbitrage_free: bool = False  #: subtract the AFNS yield-adjustment term
+    dt: float = 1.0 / 12.0  #: length of one period in years (monthly data)
 
     def loadings(self, maturities: ArrayLike) -> FloatArray:
         return ns_loadings(maturities, self.lam)
+
+    def intercept(self, maturities: ArrayLike) -> FloatArray:
+        """Measurement intercept (percent): ``−C(τ)/τ`` for AFNS, zero otherwise."""
+        tau = np.atleast_1d(np.asarray(maturities, dtype=float))
+        if not self.arbitrage_free:
+            return np.zeros(tau.size)
+        # Q is in %² per period; ΣΣᵀ in decimal² per year is Q / 1e4 / dt, and the
+        # adjustment (decimal) is linear in ΣΣᵀ, so in percent it is adj(Q/dt) / 100.
+        return -afns_yield_adjustment(tau, self.lam, self.Q / self.dt) / 100.0
+
+
+_GL_NODES, _GL_WEIGHTS = np.polynomial.legendre.leggauss(48)
+
+
+def afns_adjustment_matrices(maturities: ArrayLike, lam: float) -> FloatArray:
+    """``M(τ) = 1/(2τ) ∫₀^τ b(u) b(u)ᵀ du`` for each maturity, shape ``(n, 3, 3)``.
+
+    The AFNS yield adjustment is ``C(τ)/τ = Σ_ij M_ij(τ) (ΣΣᵀ)_ij``. The integrand
+    is smooth, so 48-point Gauss-Legendre quadrature is exact to rounding.
+    """
+    tau = np.atleast_1d(np.asarray(maturities, dtype=float))
+    u = 0.5 * tau[:, None] * (_GL_NODES[None, :] + 1.0)  # n × q nodes on [0, τ]
+    w = 0.5 * tau[:, None] * _GL_WEIGHTS[None, :]
+    e = np.exp(-lam * u)
+    b = np.stack([u, -np.expm1(-lam * u) / lam, -np.expm1(-lam * u) / lam - u * e], axis=-1)
+    M = np.einsum("nq,nqi,nqj->nij", w, b, b)
+    return M / (2.0 * tau[:, None, None])
+
+
+def afns_yield_adjustment(maturities: ArrayLike, lam: float, omega: ArrayLike) -> FloatArray:
+    """AFNS yield-adjustment term ``C(τ)/τ`` for factor covariance ``ΣΣᵀ = omega``.
+
+    Units follow ``omega``: with ``ΣΣᵀ`` in decimal² per year the result is a
+    decimal yield. Christensen, Diebold & Rudebusch (2011), eq. (22) in general
+    form; the model yield is the Nelson-Siegel yield *minus* this term.
+    """
+    M = afns_adjustment_matrices(maturities, lam)
+    return np.einsum("nij,ij->n", M, np.asarray(omega, dtype=float))
 
 
 @dataclass(frozen=True)
@@ -79,6 +141,8 @@ def kalman_filter(y: FloatArray, maturities: FloatArray, p: DNSParameters) -> Ka
     the cost is dominated by the few transient steps after each change in the
     set of observed maturities.
     """
+    if p.arbitrage_free:
+        y = y - p.intercept(maturities)[None, :]
     T = y.shape[0]
     L = p.loadings(maturities)
     A = p.A
@@ -192,11 +256,6 @@ def _steady_state_block(
 # =============================================================================
 
 
-def _pack_size(n: int, dynamics: str, fixed_lambda: bool) -> int:
-    n_a = 9 if dynamics == "var" else 3
-    return (0 if fixed_lambda else 1) + 3 + n_a + 6 + n
-
-
 #: Lower bound on the measurement noise (percent, i.e. 1 bp). Without it the MLE
 #: can drive one maturity's noise to zero - a degenerate optimum in which the
 #: filter treats that yield as exact (seen on FRED data for the 3Y and 6M).
@@ -207,10 +266,17 @@ class _Transform:
     """Maps an unconstrained vector θ to model parameters."""
 
     def __init__(
-        self, n: int, dynamics: str, fixed_lambda: float | None, level_unit_root: bool
+        self,
+        n: int,
+        dynamics: str,
+        fixed_lambda: float | None,
+        level_unit_root: bool,
+        arbitrage_free: bool = False,
+        diagonal_q: bool = False,
     ) -> None:
         self.n, self.dynamics, self.fixed_lambda = n, dynamics, fixed_lambda
         self.level_unit_root = level_unit_root
+        self.arbitrage_free, self.diagonal_q = arbitrage_free, diagonal_q
 
     def unpack(self, theta: FloatArray) -> DNSParameters:
         i = 0
@@ -233,10 +299,21 @@ class _Transform:
         chol = np.zeros((3, 3))
         chol[np.tril_indices(3)] = theta[i : i + 6]
         chol[np.diag_indices(3)] = np.exp(chol[np.diag_indices(3)])
+        if self.diagonal_q:
+            chol = np.diag(np.diag(chol))
         i += 6
         Q = chol @ chol.T
         h = _H_FLOOR + np.exp(theta[i : i + self.n])
-        return DNSParameters(lam, mu, A, Q, h)
+        return DNSParameters(lam, mu, A, Q, h, arbitrage_free=self.arbitrage_free)
+
+    def n_free(self) -> int:
+        """Number of free parameters (restricted entries are not counted)."""
+        n_a = 9 if self.dynamics == "var" else 3
+        if self.level_unit_root:
+            n_a -= 3 if self.dynamics == "var" else 1
+        n_q = 3 if self.diagonal_q else 6
+        n_mu = 2 if self.level_unit_root else 3  # a random-walk level has no mean
+        return (0 if self.fixed_lambda is not None else 1) + n_mu + n_a + n_q + self.n
 
     def pack(self, p: DNSParameters) -> FloatArray:
         parts = [] if self.fixed_lambda is not None else [np.array([np.log(p.lam)])]
@@ -266,9 +343,12 @@ class DNSResult:
     factor_cov: FloatArray  #: T × 3 × 3 filtered covariances
     converged: bool
     level_unit_root: bool
+    n_free_params: int | None = None  #: number of estimated parameters, if known
 
     @property
     def n_params(self) -> int:
+        if self.n_free_params is not None:
+            return self.n_free_params
         return int(self.params.h.size + 3 + 6 + self.params.A.size + 1)
 
     @property
@@ -293,7 +373,7 @@ class DNSResult:
             if maturities is None
             else np.interp(mats, self.maturities, p.h)  # noise of nearby maturities
         )
-        return L @ f, L @ P @ L.T + np.diag(h**2)
+        return L @ f + p.intercept(mats), L @ P @ L.T + np.diag(h**2)
 
     def summary(self) -> pd.DataFrame:
         p = self.params
@@ -309,6 +389,9 @@ class DNSResult:
             rows[f"shock sd {name}"] = float(np.sqrt(p.Q[j, j]))
         for m, h in zip(self.maturities, p.h, strict=True):
             rows[f"noise sd {maturity_label(m)} (bp)"] = float(h * 100)
+        if p.arbitrage_free:
+            for m, a in zip((10.0, 30.0), p.intercept([10.0, 30.0]), strict=True):
+                rows[f"yield adjustment {maturity_label(m)} (bp)"] = float(a * 100)
         return pd.Series(rows, name="value").to_frame()
 
 
@@ -343,6 +426,8 @@ def fit_dns(
     fixed_lambda: float | None = None,
     start: DNSParameters | None = None,
     maxiter: int = 400,
+    arbitrage_free: bool = False,
+    independent: bool = False,
 ) -> DNSResult:
     """Maximum-likelihood estimate of the state-space dynamic Nelson-Siegel model.
 
@@ -350,12 +435,21 @@ def fit_dns(
     ``NaN`` marks missing quotes. ``dynamics`` is ``"var"`` (full VAR(1)) or
     ``"diag"`` (independent AR(1) factors). ``start`` warm-starts the
     optimiser, e.g. from an estimate on a shorter sample.
+
+    ``arbitrage_free=True`` estimates the AFNS model of Christensen, Diebold
+    & Rudebusch (2011) (see the module notes); ``independent=True`` makes the
+    factors fully independent (diagonal ``A`` *and* ``Q``), CDR's preferred
+    forecasting specification.
     """
     if dynamics not in ("var", "diag"):
         raise ValueError("dynamics must be 'var' or 'diag'")
+    if independent:
+        dynamics = "diag"
     y = yields.to_numpy(dtype=float)
     mats = np.asarray(yields.columns, dtype=float)
-    tr = _Transform(mats.size, dynamics, fixed_lambda, level_unit_root)
+    tr = _Transform(
+        mats.size, dynamics, fixed_lambda, level_unit_root, arbitrage_free, diagonal_q=independent
+    )
     lam0 = fixed_lambda if fixed_lambda is not None else DIEBOLD_LI_LAMBDA
     p0 = start or _starting_values(yields, dynamics, lam0, level_unit_root)
     theta0 = tr.pack(p0)
@@ -386,6 +480,7 @@ def fit_dns(
         factor_cov=out.filtered_cov,
         converged=bool(res.success),
         level_unit_root=level_unit_root,
+        n_free_params=tr.n_free(),
     )
 
 
@@ -422,6 +517,8 @@ def evaluate_dns_forecasts(
     dynamics: str = "var",
     level_unit_root: bool = False,
     interval: float = 0.8,
+    arbitrage_free: bool = False,
+    independent: bool = False,
 ) -> DNSForecastEvaluation:
     """Rolling-origin forecasts vs the random walk, with interval coverage.
 
@@ -448,6 +545,8 @@ def evaluate_dns_forecasts(
                 level_unit_root=level_unit_root,
                 start=params,
                 maxiter=400 if params is None else 150,
+                arbitrage_free=arbitrage_free,
+                independent=independent,
             )
             params = est.params
         out = kalman_filter(y[: t + 1], mats, params)
