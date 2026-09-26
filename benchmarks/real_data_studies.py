@@ -13,10 +13,13 @@
    CMT quotes are compared with the Fed's independently estimated Svensson
    curve (Gürkaynak, Sack & Wright, 2007) for each way of reading the quotes.
    With ``--source synthetic`` the reference is the known true curve.
-4. **State-space dynamic Nelson-Siegel.** Kalman-filter/MLE forecasts
+4. **Term premium.** The Adrian-Crump-Moench 10-year premium with 3-6
+   factors, on this engine's curves and on the Fed's, against Kim-Wright.
+5. **State-space dynamic Nelson-Siegel.** Kalman-filter/MLE forecasts
    (Diebold, Rudebusch & Aruoba, 2006), with a mean-reverting or a
-   random-walk level, against the random walk - point accuracy and the
-   coverage of 80% forecast intervals.
+   random-walk level, independent factors, and the arbitrage-free AFNS
+   restriction (Christensen, Diebold & Rudebusch, 2011), against the random
+   walk - point accuracy and the coverage of 80% forecast intervals.
 
 Usage::
 
@@ -38,10 +41,17 @@ from nss_engine.calibration import (
     calibrate,
     calibrate_panel,
 )
-from nss_engine.data import DataError, load_gsw_parameters, load_treasury_yields, maturity_label
+from nss_engine.data import (
+    DataError,
+    load_gsw_parameters,
+    load_kim_wright_term_premium,
+    load_treasury_yields,
+    maturity_label,
+)
 from nss_engine.forecasting import evaluate_forecasts
 from nss_engine.statespace import evaluate_dns_forecasts
 from nss_engine.synthetic import simulate_market
+from nss_engine.termpremium import compare_term_premia, fit_acm, zero_panel
 from nss_engine.validation import compare_to_reference
 
 INTERIOR = (0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 20.0)
@@ -162,16 +172,58 @@ def main() -> None:
     if reference is not None:
         gsw_study(monthly, reference, args.source)
 
-    # ---- 4. state-space dynamic Nelson-Siegel ------------------------------------------
+    # ---- 4. term premium robustness ---------------------------------------------------
+    if args.source == "fred":
+        term_premium_study(monthly, reference)
+
+    # ---- 5. state-space dynamic Nelson-Siegel ------------------------------------------
     dns_study(core, fc)
+
+
+def term_premium_study(monthly: pd.DataFrame, reference: pd.DataFrame | None) -> None:
+    """ACM 10-year term premium vs Kim-Wright, by number of factors and source curve."""
+    try:
+        kw = load_kim_wright_term_premium(start=monthly.index[0])
+    except DataError as exc:
+        print(f"\n(Kim-Wright term premium unavailable: {exc})\n")
+        return
+    fit = calibrate_panel(monthly, CalibrationConfig(lambda_smoothing=DEFAULT_PANEL_SMOOTHING))
+    curves = {"NSS curves (this engine)": zero_panel(fit.params)}
+    if reference is not None:
+        curves["Fed GSW curve"] = zero_panel(reference.loc[monthly.index[0] :])
+    rows = {}
+    for curve_name, zeros in curves.items():
+        for k in (3, 4, 5, 6):
+            tp = fit_acm(zeros, n_factors=k).decomposition(10)["term_premium"]
+            stats = compare_term_premia(tp, kw)
+            rows[(curve_name, k)] = {
+                "mean TP (%)": float(tp.mean()),
+                "latest TP (%)": float(tp.iloc[-1]),
+                **stats,
+            }
+    table = pd.DataFrame(rows).T.drop(columns="n_months")
+    table.index.names = ["curve", "factors"]
+    print("\n## Term premium (ACM, 10-year) vs Kim-Wright\n")
+    print(
+        "Correlation of monthly levels and 12-month changes, RMSE and mean gap "
+        "(ACM − Kim-Wright, bp). ACM's own choice is 5 factors on the Fed's curve.\n"
+    )
+    print(table.round(3).to_markdown())
 
 
 def dns_study(core: pd.DataFrame, two_step: pd.DataFrame) -> None:
     t0 = time.perf_counter()
     rows, cover = {}, {}
-    for label, unit_root in (("VAR(1)", False), ("VAR(1), random-walk level", True)):
+    specs: dict[str, dict[str, bool]] = {
+        "VAR(1)": {},
+        "VAR(1), random-walk level": {"level_unit_root": True},
+        "independent factors": {"independent": True},
+        "AFNS, VAR(1)": {"arbitrage_free": True},
+        "AFNS, independent factors": {"arbitrage_free": True, "independent": True},
+    }
+    for label, kwargs in specs.items():
         ev = evaluate_dns_forecasts(
-            core, horizons=(1, 6, 12), min_train=120, reestimate_every=12, level_unit_root=unit_root
+            core, horizons=(1, 6, 12), min_train=120, reestimate_every=12, **kwargs
         )
         rel = ev.relative_rmse
         rows[f"state-space {label}"] = {f"h={h}m": rel.loc[h].mean() for h in rel.index}
@@ -185,7 +237,9 @@ def dns_study(core: pd.DataFrame, two_step: pd.DataFrame) -> None:
     print("\n## State-space dynamic Nelson-Siegel (Kalman filter, MLE)\n")
     print(
         "RMSE relative to the random walk, averaged over tenors (<1 = better); parameters "
-        "re-estimated every 12 months on data up to each origin.\n"
+        "re-estimated every 12 months on data up to each origin. AFNS rows impose "
+        "no-arbitrage (Christensen, Diebold & Rudebusch, 2011); 'independent factors' "
+        "means diagonal factor dynamics and shocks.\n"
     )
     print(table.round(3).to_markdown())
     print("\nCoverage of 80% forecast intervals (share of outcomes inside):\n")

@@ -359,7 +359,105 @@ from the model itself, with 20 years of training data, the intervals cover
 77–84%. They ignore parameter uncertainty, so with short training samples they
 are too narrow.
 
-## 6. Risk and relative value
+### 5.2 Arbitrage-free Nelson–Siegel (AFNS)
+
+The dynamic Nelson–Siegel model chooses its loadings and its factor dynamics
+separately, so nothing rules out arbitrage between bonds. Christensen, Diebold
+& Rudebusch (2011) show that if the factors follow a Gaussian diffusion
+$dX_t = K^Q(\theta^Q - X_t)\,dt + \Sigma\,dW^Q_t$ with the short rate
+$r_t = X_{1,t} + X_{2,t}$ and
+
+$$
+K^Q = \begin{pmatrix}0&0&0\\0&\lambda&-\lambda\\0&0&\lambda\end{pmatrix},
+$$
+
+then zero-coupon yields have **exactly** the Nelson–Siegel loadings plus a
+maturity-dependent constant:
+
+$$
+y_t(\tau) = \Lambda(\lambda) X_t - \frac{C(\tau)}{\tau},\qquad
+\frac{C(\tau)}{\tau} = \frac{1}{2\tau}\int_0^\tau b(u)^\top \Sigma\Sigma^\top b(u)\,du,
+$$
+
+with $b(u) = \big(u,\ \tfrac{1-e^{-\lambda u}}{\lambda},\
+\tfrac{1-e^{-\lambda u}}{\lambda} - u e^{-\lambda u}\big)$. The *yield
+adjustment* $C(\tau)/\tau$ is a convexity effect: it is negligible at short
+maturities and grows roughly like $\tau^2$ through the level term
+$\sigma_{11}^2\tau^2/6$.
+
+The engine evaluates the integral for any (full) $\Sigma\Sigma^\top$ with
+48-point Gauss–Legendre quadrature, which is exact to rounding because the
+integrand is smooth. In the state-space model $\Sigma\Sigma^\top = Q/\Delta t$
+(the monthly innovation covariance per year), so the same parameters drive the
+dynamics and the cross-section and the restriction adds no parameters.
+`fit_dns(..., arbitrage_free=True)` subtracts the adjustment in the
+measurement equation; `independent=True` makes $A$ and $Q$ diagonal, CDR's
+preferred forecasting specification.
+
+*Tests.* The quadrature matches CDR's closed form for diagonal $\Sigma$ to
+$10^{-10}$. Independently, zero-coupon bonds are priced exactly under the
+risk-neutral diffusion above for a full $\Sigma$: appending
+$Y_t=\int_0^t r_s\,ds$ to the state, $E[Y_\tau]$ and $\operatorname{Var}(Y_\tau)$
+follow from a matrix exponential (Van Loan, 1978), and
+$-\log P(\tau)/\tau = (E[Y_\tau] - \tfrac12\operatorname{Var}Y_\tau)/\tau$ agrees
+with the AFNS yield to $10^{-12}$.
+
+## 6. Term premium (Adrian, Crump & Moench, 2013)
+
+A long yield is the average short rate expected over its life plus a **term
+premium**. With monthly log zero yields $y^{(n)}_t$ ($n$ = 1…120 months, in
+decimals per month) from the NSS curves:
+
+1. **Factors.** $X_t$ = the first $K=5$ principal components of the yields.
+2. **Real-world dynamics.** $X_{t+1} = \mu + \Phi X_t + v_{t+1}$ by OLS,
+   $\Sigma = \operatorname{Cov}(v)$.
+3. **Excess returns.** For $n$ = 6, 12, …, 120,
+   $rx^{(n-1)}_{t+1} = \log P^{(n-1)}_{t+1} - \log P^{(n)}_t - y^{(1)}_t$ is
+   regressed on $(1, v_{t+1}, X_t)$:
+   $rx = a\iota^\top + \beta^\top V + cX_- + E$, with $\sigma^2$ the variance
+   of $E$.
+4. **Prices of risk.** No arbitrage implies
+   $\lambda_1 = (\beta\beta^\top)^{-1}\beta c$ and
+   $\lambda_0 = (\beta\beta^\top)^{-1}\beta\big(a + \tfrac12(B^\*\operatorname{vec}\Sigma + \sigma^2\iota)\big)$,
+   where row $n$ of $B^\*$ is $\operatorname{vec}(\beta^{(n)}\beta^{(n)\top})^\top$.
+5. **Pricing.** $\log P^{(n)}_t = A_n + B_n^\top X_t$ with $A_0 = 0$, $B_0 = 0$,
+   $$A_n = A_{n-1} + B_{n-1}^\top(\mu - \lambda_0) + \tfrac12\big(B_{n-1}^\top\Sigma B_{n-1} + \sigma^2\big) - \delta_0,\qquad
+   B_n^\top = B_{n-1}^\top(\Phi - \lambda_1) - \delta_1^\top,$$
+   where $y^{(1)}_t = \delta_0 + \delta_1^\top X_t$ by OLS (the $\sigma^2$ term is
+   dropped for $n=1$, whose "$(n-1)$-month bond" is cash). The same recursion
+   with $\lambda_0=\lambda_1=0$ gives the **risk-neutral yield**, the average
+   expected short rate. The term premium is the difference.
+
+*What is identified, and what is not.* The excess-return regression pins down
+the risk-neutral dynamics $\Phi - \lambda_1$ exactly: on exact data from a
+simulated arbitrage-free market (`synthetic.simulate_affine_market`) its
+eigenvalues are recovered to $10^{-6}$ and yields are priced to $10^{-3}$ bp. The
+error in the premium comes entirely from the real-world VAR, and shrinks with
+the sample: 17 bp RMSE at 50 years of monthly data, 8 bp at 1,700 years. The
+term premium is only as good as the estimate of how persistent rates are.
+
+*Stationarity.* On short samples OLS can return an explosive $\Phi$, which sends
+ten-year expectations to infinity. If its largest root exceeds 0.998, $\Phi$ is
+scaled down to it and $\mu$ reset so the factors keep their sample mean, while
+$\Phi - \lambda_1$ and $\mu - \lambda_0$ are held fixed. Fitted yields are then
+unchanged; only the split between expectations and premium moves.
+
+*Real time.* `real_time_decomposition` re-estimates the model every month on
+data up to that month (after a 60-month start). With so few months the smallest
+principal components can be pure noise and the risk-neutral dynamics explode at
+long maturities; an estimate that misprices that month's curve by more than
+10 bp on average is discarded (one month in 317 on the synthetic market).
+
+*Benchmarks.* The Kim & Wright (2005) premium (FRED `THREEFYTP10`), from a
+three-factor affine model fitted with survey forecasts of short rates, and the
+same ACM model run on the Fed's GSW curve, as ACM do.
+
+*Recessions.* Rosenberg & Maurer (2008) find that the expectations component
+of the spread, not the term premium, carries its recession signal. The engine
+tests this with the pseudo-real-time probits of §4: the 10y−3m spread, the
+spread minus the real-time 10-year term premium, and the premium alone.
+
+## 7. Risk and relative value
 
 * **Pricing** discounts each cash flow on the NSS zero curve.
 * **Effective duration and convexity** come from ±1 bp parallel bumps.
@@ -375,19 +473,25 @@ are too narrow.
   data (the test perturbs the last observation and checks earlier values do not
   change). AR(1) half-lives measure how quickly mispricings correct.
 
-## 7. Limitations
+## 8. Limitations
 
 * CMT yields are interpolated on-the-run par yields, not prices of individual
   bonds. Residuals are therefore a *curve-shape* signal, not directly tradeable
   mispricings.
-* The NSS model is a statistical fit, not an arbitrage-free model. For
-  arbitrage-free dynamics see the AFNS model of Christensen, Diebold & Rudebusch (2011).
+* The cross-sectional NSS fit is a statistical curve, not an arbitrage-free
+  model. The state-space model can impose no-arbitrage (AFNS, §5.2), and the
+  term premium model (§6) is arbitrage-free by construction, but the curves
+  they start from are not.
+* Term premium estimates are model-dependent and uncertain; different models
+  disagree by tens of basis points, mostly because long-run expectations hinge
+  on how persistent rates are estimated to be.
 * The probit rests on a handful of recessions (four since 1990). Its
   probabilities are indicative and have wide uncertainty, which the
   pseudo-real-time evaluation makes visible.
 
 ## References
 
+* Adrian, T., Crump, R. & Moench, E. (2013). Pricing the term structure with linear regressions. *Journal of Financial Economics*.
 * Bates, J. & Granger, C. (1969). The combination of forecasts. *Operational Research Quarterly*.
 * Beaton, A. & Tukey, J. (1974). The fitting of power series, meaning polynomials, illustrated on band-spectroscopic data. *Technometrics*.
 * Christensen, J., Diebold, F. & Rudebusch, G. (2011). The affine arbitrage-free class of Nelson–Siegel term structure models. *Journal of Econometrics*.
@@ -404,9 +508,12 @@ are too narrow.
 * Harvey, D., Leybourne, S. & Newbold, P. (1997). Testing the equality of prediction mean squared errors. *International Journal of Forecasting*.
 * Ho, T. (1992). Key rate durations: measures of interest rate risks. *Journal of Fixed Income*.
 * Huber, P. (1964). Robust estimation of a location parameter. *Annals of Mathematical Statistics*.
+* Kim, D. & Wright, J. (2005). An arbitrage-free three-factor term structure model and the recent behavior of long-term yields and distant-horizon forward rates. Federal Reserve Board FEDS 2005-33.
 * Künsch, H. (1989). The jackknife and the bootstrap for general stationary observations. *Annals of Statistics*.
 * Litterman, R. & Scheinkman, J. (1991). Common factors affecting bond returns. *Journal of Fixed Income*.
 * Nelson, C. & Siegel, A. (1987). Parsimonious modeling of yield curves. *Journal of Business*.
+* Rosenberg, J. & Maurer, S. (2008). Signal or noise? Implications of the term premium for recession forecasting. *FRBNY Economic Policy Review*.
 * Svensson, L. (1994). Estimating and interpreting forward interest rates: Sweden 1992–1994. NBER Working Paper 4871.
 * Timmermann, A. (2006). Forecast combinations. In *Handbook of Economic Forecasting*, vol. 1. Elsevier.
+* Van Loan, C. (1978). Computing integrals involving the matrix exponential. *IEEE Transactions on Automatic Control*.
 * Willner, R. (1996). A new tool for portfolio managers: level, slope, and curvature durations. *Journal of Fixed Income*.

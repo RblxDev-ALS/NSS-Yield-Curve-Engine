@@ -17,13 +17,15 @@ Quick start::
 from .calibration import CalibrationConfig, FitResult, PanelFit, calibrate, calibrate_panel
 from .models import DIEBOLD_LI_LAMBDA, NSSCurve, ns_loadings, nss_loadings
 from .pipeline import PipelineConfig, PipelineResult, run_pipeline, write_outputs
-from .statespace import DNSResult, fit_dns
+from .statespace import DNSResult, afns_yield_adjustment, fit_dns
+from .termpremium import ACMResult, fit_acm, real_time_decomposition, zero_panel
 from .validation import ReferenceComparison, compare_to_reference
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 __all__ = [
     "DIEBOLD_LI_LAMBDA",
+    "ACMResult",
     "CalibrationConfig",
     "DNSResult",
     "FitResult",
@@ -33,12 +35,16 @@ __all__ = [
     "PipelineResult",
     "ReferenceComparison",
     "__version__",
+    "afns_yield_adjustment",
     "calibrate",
     "calibrate_panel",
     "compare_to_reference",
+    "fit_acm",
     "fit_dns",
     "ns_loadings",
     "nss_loadings",
+    "real_time_decomposition",
     "run_pipeline",
     "write_outputs",
+    "zero_panel",
 ]

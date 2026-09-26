@@ -3,8 +3,9 @@
 [![CI](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml)
 [![Live dashboard](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml)
 ![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
-![Tests](https://img.shields.io/badge/tests-169%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-191%20passing-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/examples/tour.ipynb)
 
 A Python engine that fits the **Nelson–Siegel–Svensson (NSS)** model to the U.S.
 Treasury yield curve every week since 1990. It then uses the fitted curves to
@@ -277,7 +278,7 @@ Treasury market** with known true parameters. It follows a dynamic NSS model wit
 a zero lower bound and realistic inversions. The tests and benchmarks can then
 check correctness, not just that the code runs.
 
-* **169 tests, 96% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
+* **191 tests, 96% coverage**, on Python 3.10–3.13 in CI, with `ruff` and `mypy`.
 * **Math identities**: the forward curve integrates back to the zero curve, par
   bonds price at exactly 100, key-rate durations sum to duration, and the level
   factor duration equals duration.
@@ -336,10 +337,11 @@ flowchart LR
     cal --> regime[regime.py<br/>regimes · probit · lead times]
     cal --> ana[analytics.py<br/>PCA · risk · carry · RV]
     data --> fc[forecasting.py<br/>Diebold–Li · DM tests]
-    data --> ss[statespace.py<br/>Kalman filter · MLE]
+    data --> ss[statespace.py<br/>Kalman filter · MLE · AFNS]
+    cal --> tp[termpremium.py<br/>ACM term premium]
     FED[(Federal Reserve<br/>GSW curve)] --> val[validation.py]
     cal --> val
-    regime & ana & fc & ss & val --> pipe[pipeline.py]
+    regime & ana & fc & ss & tp & val --> pipe[pipeline.py]
     pipe --> out[dashboard.html · report.md<br/>CSV · JSON]
 ```
 
@@ -352,11 +354,12 @@ src/nss_engine/
   analytics.py     PCA, bond risk, factor durations, carry, rich/cheap
   regime.py        regimes, curve dynamics, inversions, probit recession model
   forecasting.py   Diebold-Li model, out-of-sample evaluation, Diebold-Mariano
-  statespace.py    state-space DNS: Kalman filter, MLE, predictive intervals
+  statespace.py    state-space DNS and arbitrage-free AFNS: Kalman filter, MLE, intervals
+  termpremium.py   Adrian-Crump-Moench term premium, pseudo-real-time decomposition
   validation.py    comparison with a reference curve (the Fed's GSW curve)
   pipeline.py      end-to-end run and exports
   report.py, viz.py, cli.py
-tests/             169 tests (incl. a real market curve)
+tests/             191 tests (incl. a real market curve)
 benchmarks/        v0 / 1.x / 2.0 comparison, regularization tuning, real-data studies
 docs/              methodology and references
 ```

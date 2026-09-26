@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nss-engine"
-version = "2.1.0"
+version = "2.2.0"
 description = "Nelson-Siegel-Svensson yield curve engine: robust calibration, curve analytics, macro regime detection and factor forecasting for the U.S. Treasury curve."
 readme = "README.md"
 requires-python = ">=3.10"

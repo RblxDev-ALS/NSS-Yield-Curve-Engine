@@ -88,6 +88,11 @@ def test_write_outputs(result, tmp_path):
     assert "pseudo-real time" in report and "State-space dynamic Nelson-Siegel" in report
     assert paths["outliers"].exists() and paths["reference"].exists()
     assert "Term premium (Adrian-Crump-Moench)" in report
+    badge = json.loads(paths["badge_regime"].read_text())
+    assert badge["schemaVersion"] == 1
+    assert badge["message"].split()[0] in {"Inverted", "Flat", "Normal", "Steep"}
+    assert {"badge_recession", "badge_term_premium", "badge_as_of"} <= set(paths)
+    assert json.loads(paths["badge_recession"].read_text())["message"].endswith("%")
     tp = pd.read_csv(paths["term_premium"], index_col=0)
     assert {"expected_short_rate", "term_premium", "term_premium_real_time"} <= set(tp.columns)
     html = paths["dashboard"].read_text()

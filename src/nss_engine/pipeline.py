@@ -627,6 +627,41 @@ def _truth_errors(r: PipelineResult) -> dict[str, float]:
     return {"curve_rmse_vs_truth_bp": float(np.sqrt(np.mean((est - true) ** 2)) * 100)}
 
 
+def badges(result: PipelineResult) -> dict[str, dict[str, Any]]:
+    """Live-status badges in the shields.io *endpoint* format.
+
+    Published with the dashboard, they let a README show the latest reading,
+    e.g. ``https://img.shields.io/endpoint?url=<site>/badges/regime.json``.
+    """
+    s = result.summary
+    regime_colors = {"Inverted": "red", "Flat": "orange", "Normal": "blue", "Steep": "blue"}
+    out: dict[str, dict[str, Any]] = {
+        "regime": {
+            "label": f"curve ({s['regime']['slope_definition'].replace(' ', '')})",
+            "message": f"{s['regime']['current']} {result.spreads['slope'].iloc[-1]:+.2f}pp",
+            "color": regime_colors.get(s["regime"]["current"], "lightgrey"),
+        },
+        "as_of": {"label": "data as of", "message": str(s["as_of"]), "color": "informational"},
+    }
+    if "recession_model" in s:
+        p = s["recession_model"]["latest_probability"]
+        out["recession"] = {
+            "label": f"recession odds {s['recession_model']['horizon_months']}m",
+            "message": f"{p:.0%}",
+            "color": "red" if p >= 0.4 else "orange" if p >= 0.2 else "green",
+        }
+    if "term_premium" in s:
+        tp = s["term_premium"]["latest"]["term_premium"]
+        out["term_premium"] = {
+            "label": "10Y term premium",
+            "message": f"{tp:+.2f}%",
+            "color": "informational",
+        }
+    for badge in out.values():
+        badge["schemaVersion"] = 1
+    return out
+
+
 def write_outputs(
     result: PipelineResult, out_dir: str | Path, dashboard: bool = True, offline: bool = False
 ) -> dict[str, Path]:
@@ -679,6 +714,12 @@ def write_outputs(
 
     paths["summary"] = out / "summary.json"
     paths["summary"].write_text(json.dumps(result.summary, indent=2, default=str))
+
+    badge_dir = out / "badges"
+    badge_dir.mkdir(exist_ok=True)
+    for name, badge in badges(result).items():
+        paths[f"badge_{name}"] = badge_dir / f"{name}.json"
+        paths[f"badge_{name}"].write_text(json.dumps(badge))
 
     paths["report"] = out / "report.md"
     paths["report"].write_text(render_markdown(result))

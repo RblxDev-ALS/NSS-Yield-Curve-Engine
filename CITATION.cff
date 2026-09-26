@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software or its results, please cite it as below."
+title: "NSS Yield Curve Engine"
+abstract: >-
+  A tested Python engine that fits the Nelson-Siegel-Svensson model to the U.S.
+  Treasury par-yield curve, validates it against the Federal Reserve's curve, and
+  uses it for recession signals, term premium decomposition (Adrian-Crump-Moench),
+  arbitrage-free state-space forecasting (AFNS) and bond risk.
+type: software
+authors:
+  - alias: RblxDev-ALS
+repository-code: "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine"
+keywords:
+  - yield curve
+  - Nelson-Siegel-Svensson
+  - term premium
+  - fixed income
+  - recession forecasting
+version: 2.2.0
