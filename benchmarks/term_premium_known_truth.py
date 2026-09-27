@@ -25,6 +25,13 @@ Usage::
 
 from __future__ import annotations
 
+import os
+
+# one BLAS thread per worker process: the matrices are tiny, and oversubscribed
+# threads slow the parallel replications down several-fold
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 import argparse
 import time
 import warnings

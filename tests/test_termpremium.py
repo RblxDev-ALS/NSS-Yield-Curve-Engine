@@ -185,7 +185,9 @@ def test_bias_correction_leaves_explosive_and_bad_input_alone():
     phi = np.array([[1.02]])
     assert bias_corrected_var(X, phi) is phi
     with pytest.raises(ValueError):
-        bias_corrected_var(np.random.default_rng(0).standard_normal((50, 1)), np.array([[0.5]]), "x")
+        bias_corrected_var(
+            np.random.default_rng(0).standard_normal((50, 1)), np.array([[0.5]]), "x"
+        )
 
 
 def test_real_world_variants_keep_fitted_yields(affine):

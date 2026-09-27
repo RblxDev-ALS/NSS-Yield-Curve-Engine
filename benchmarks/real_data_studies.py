@@ -275,7 +275,9 @@ def anchored_term_premium_study(nss: pd.DataFrame, kw: pd.Series) -> None:
             survey_tp = (y10m[common] - b10[common]).rename("survey TP")
             kw_m = kw.groupby(kw.index.to_period("M")).mean()
             comp = {"Kim-Wright": kw_m}
-            comp.update({k: pd.Series(v.to_numpy(), index=v.index.to_period("M")) for k, v in full.items()})
+            comp.update(
+                {k: pd.Series(v.to_numpy(), index=v.index.to_period("M")) for k, v in full.items()}
+            )
             srow = {}
             for k, v in comp.items():
                 both = pd.concat([survey_tp, v.rename("x")], axis=1).dropna()
@@ -408,7 +410,9 @@ def significance_study(evs: dict[str, DNSForecastEvaluation]) -> None:
         cov_rows[("AFNS − state-space", f"{h}m")] = hac_mean_test(
             diff.to_numpy(), 0.0, lags=max(h - 1, 6)
         )
-    print("\nCoverage of 80% intervals: mean, Newey-West s.e., test against 80% (or 0 for the gap)\n")
+    print(
+        "\nCoverage of 80% intervals: mean, Newey-West s.e., test against 80% (or 0 for the gap)\n"
+    )
     ct = pd.DataFrame(cov_rows).T
     ct.index.names = ["model", "horizon"]
     print(ct.round(3).to_markdown())

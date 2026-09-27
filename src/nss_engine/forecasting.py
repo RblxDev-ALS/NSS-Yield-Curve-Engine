@@ -171,9 +171,7 @@ def diebold_mariano_loss(d: FloatArray, h: int) -> tuple[float, float]:
     return stat, pval
 
 
-def compare_forecasts(
-    errors_a: pd.DataFrame, errors_b: pd.DataFrame, h: int
-) -> dict[str, float]:
+def compare_forecasts(errors_a: pd.DataFrame, errors_b: pd.DataFrame, h: int) -> dict[str, float]:
     """Is forecast A more accurate than B? Pooled over tenors, with a DM test.
 
     ``errors_*`` hold forecast errors (bp) with one row per forecast origin and

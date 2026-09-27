@@ -47,7 +47,7 @@ jobs:
           /tmp/smoke/bin/pip install dist/*.whl
           cd /tmp
           /tmp/smoke/bin/nss-engine --version
-          /tmp/smoke/bin/python -c "import nss_engine, numpy as np; c = nss_engine.NSSCurve(4.5, -1.5, -2, 1, 0.9, 0.15); f = nss_engine.calibrate(np.array([0.25, 1, 2, 5, 10, 30]), c.par_yield([0.25, 1, 2, 5, 10, 30])); assert f.rmse_bp < 0.1; print(nss_engine.__version__, 'ok')"
+          /tmp/smoke/bin/python -c "import nss_engine, numpy as np; t = np.array([0.25, 0.5, 1, 2, 3, 5, 7, 10, 20, 30]); c = nss_engine.NSSCurve(4.5, -1.5, -2, 1, 0.9, 0.15); f = nss_engine.calibrate(t, c.par_yield(t)); assert f.rmse_bp < 0.1, f.rmse_bp; print(nss_engine.__version__, 'ok')"
       - uses: actions/upload-artifact@v4
         with:
           name: dist

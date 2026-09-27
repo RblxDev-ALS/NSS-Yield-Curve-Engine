@@ -138,7 +138,9 @@ def test_rolling_evaluation():
     np.testing.assert_allclose(
         np.sqrt((ev.errors(1, "combination") ** 2).mean()), ev.rmse_combination.loc[1]
     )
-    np.testing.assert_allclose(np.sqrt((ev.errors(1, "random_walk") ** 2).mean()), ev.rmse_random_walk.loc[1])
+    np.testing.assert_allclose(
+        np.sqrt((ev.errors(1, "random_walk") ** 2).mean()), ev.rmse_random_walk.loc[1]
+    )
     np.testing.assert_allclose(ev.inside[6].mean(), ev.coverage.loc[6])
     with pytest.raises(ValueError):
         ev.errors(1, "oracle")
