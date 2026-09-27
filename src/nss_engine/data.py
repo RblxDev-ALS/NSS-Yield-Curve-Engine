@@ -42,6 +42,26 @@ TREASURY_SERIES: dict[str, float] = {
     "DGS30": 30.0,
 }
 
+#: FRED daily TIPS constant-maturity (real) yields -> maturity in years. The
+#: 5-, 7-, 10- and 20-year series start in January 2003; the 30-year in
+#: February 2010.
+TIPS_SERIES: dict[str, float] = {
+    "DFII5": 5.0,
+    "DFII7": 7.0,
+    "DFII10": 10.0,
+    "DFII20": 20.0,
+    "DFII30": 30.0,
+}
+
+#: FRED's own breakeven inflation rates (percent, daily): the 5- and 10-year
+#: nominal minus TIPS constant-maturity yields, and the 5-year, 5-year forward
+#: rate computed from them.
+BREAKEVEN_SERIES: dict[str, str] = {
+    "T5YIE": "5Y breakeven",
+    "T10YIE": "10Y breakeven",
+    "T5YIFR": "5y5y forward breakeven",
+}
+
 #: NBER recession indicator (monthly, 1 = recession), published on FRED.
 RECESSION_SERIES = "USREC"
 
@@ -289,6 +309,39 @@ def load_treasury_yields(
     return panel
 
 
+def load_tips_yields(
+    start: str | pd.Timestamp | None = "2003-01-01",
+    end: str | pd.Timestamp | None = None,
+    freq: str | None = "W-FRI",
+    how: str = "last",
+    min_tenors: int = 4,
+    **fetch_kwargs: object,
+) -> pd.DataFrame:
+    """TIPS constant-maturity real yield panel from FRED (``DFII5`` … ``DFII30``).
+
+    Same layout as :func:`load_treasury_yields`: columns are maturities in
+    years, values in percent. Like the nominal CMT yields these are
+    semi-annual par yields, of inflation-indexed notes and bonds.
+    """
+    raw = fetch_fred(TIPS_SERIES, start=start, end=end, **fetch_kwargs)
+    known = {c: TIPS_SERIES[c] for c in raw.columns if c in TIPS_SERIES}
+    panel = raw[list(known)].rename(columns=known).sort_index(axis=1)
+    panel = resample_yields(panel, freq, how)
+    panel = panel[panel.notna().sum(axis=1) >= min_tenors]
+    panel.index.name = "date"
+    return panel
+
+
+def load_breakevens(
+    start: str | pd.Timestamp | None = "2003-01-01",
+    end: str | pd.Timestamp | None = None,
+    **fetch_kwargs: object,
+) -> pd.DataFrame:
+    """FRED's breakeven inflation rates (``T5YIE``, ``T10YIE``, ``T5YIFR``), daily, percent."""
+    raw = fetch_fred(BREAKEVEN_SERIES, start=start, end=end, **fetch_kwargs)
+    return raw.dropna(how="all")
+
+
 def load_recession_indicator(
     start: str | pd.Timestamp | None = None,
     end: str | pd.Timestamp | None = None,
@@ -481,6 +534,9 @@ def _read_spf_excel(content: bytes) -> pd.DataFrame:
 #: The Fed's daily Svensson zero-curve parameters (Gürkaynak, Sack & Wright, 2007).
 GSW_URL = "https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv"
 
+#: The Fed's daily Svensson curve for TIPS real yields (Gürkaynak, Sack & Wright, 2010).
+GSW_TIPS_URL = "https://www.federalreserve.gov/data/yield-curve-tables/feds200805.csv"
+
 
 def parse_gsw_csv(text: str) -> pd.DataFrame:
     """Parse ``feds200628.csv`` into NSS parameters in this package's convention.
@@ -544,6 +600,25 @@ def load_gsw_parameters(
     yields. Their curve is reliable from about 1 year to 30 years.
     """
     text = _cached_text("feds200628", GSW_URL, cache_dir, max_age_hours, refresh)
+    return parse_gsw_csv(text).loc[slice(start, end)]
+
+
+def load_gsw_tips_parameters(
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    *,
+    cache_dir: Path | str | None = None,
+    max_age_hours: float = 24.0,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """The Fed's Svensson curve for TIPS real zero yields (Gürkaynak, Sack & Wright, 2010).
+
+    Same file layout as :func:`load_gsw_parameters`. Subtracting it from the
+    nominal GSW curve gives the Fed's own zero-coupon breakeven inflation, an
+    independent benchmark for :mod:`nss_engine.inflation`. GSW consider it
+    reliable from about 2 (early years: 5) to 20 years.
+    """
+    text = _cached_text("feds200805", GSW_TIPS_URL, cache_dir, max_age_hours, refresh)
     return parse_gsw_csv(text).loc[slice(start, end)]
 
 

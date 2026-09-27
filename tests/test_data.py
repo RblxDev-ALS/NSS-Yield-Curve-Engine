@@ -294,3 +294,35 @@ def test_load_spf_bill_forecasts_downloads_caches_and_falls_back(tmp_path, monke
     monkeypatch.setattr(data, "_http_get_bytes", lambda url, **k: b"not a spreadsheet")
     with pytest.raises(DataError):
         data.load_spf_bill_forecasts(cache_dir=tmp_path / "bad")
+
+
+def test_load_tips_yields_and_breakevens(monkeypatch):
+    idx = pd.date_range("2009-12-28", periods=10, freq="B")
+
+    def fake(series_id, **kwargs):
+        vals = {"DFII5": 0.5, "DFII7": 0.9, "DFII10": 1.2, "DFII20": 1.8, "DFII30": 2.0}
+        s = pd.Series(vals.get(series_id, 2.3), index=idx)
+        if series_id == "DFII30":
+            s.iloc[:5] = np.nan  # the 30-year starts later
+        return s
+
+    monkeypatch.setattr(data, "fetch_fred_series", fake)
+    tips = data.load_tips_yields(start="2009-01-01", freq=None)
+    assert list(tips.columns) == [5.0, 7.0, 10.0, 20.0, 30.0]
+    assert tips[30.0].isna().sum() == 5 and len(tips) == 10
+    weekly = data.load_tips_yields(start="2009-01-01")
+    assert len(weekly) == 2
+    be = data.load_breakevens(start="2009-01-01")
+    assert list(be.columns) == ["T5YIE", "T10YIE", "T5YIFR"]
+
+
+def test_load_gsw_tips_parameters(monkeypatch, tmp_path):
+    text = (
+        "Note,\nSome text\n"
+        "Date,BETA0,BETA1,BETA2,BETA3,TAU1,TAU2,TIPSY05\n"
+        "2020-01-02,1.5,-1.0,0.5,0.2,2.0,10.0,0.1\n"
+    )
+    monkeypatch.setattr(data, "_http_get", lambda url, **k: text)
+    p = data.load_gsw_tips_parameters(cache_dir=tmp_path)
+    assert p["lambda1"].iloc[0] == pytest.approx(0.5)
+    assert p["lambda2"].iloc[0] == pytest.approx(0.1)
