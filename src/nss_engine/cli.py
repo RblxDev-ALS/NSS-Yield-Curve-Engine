@@ -81,6 +81,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         run_forecasts=not args.no_forecast,
         reference_curve=not args.no_reference,
         term_premium=not args.no_term_premium,
+        term_premium_surveys=not args.no_surveys,
     )
     t0 = time.perf_counter()
     result = run_pipeline(
@@ -172,6 +173,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-term-premium",
         action="store_true",
         help="skip the term premium decomposition (ACM model)",
+    )
+    p_run.add_argument(
+        "--no-surveys",
+        action="store_true",
+        help="do not anchor the term premium to SPF survey forecasts (FRED source)",
     )
     p_run.add_argument(
         "--no-reference",

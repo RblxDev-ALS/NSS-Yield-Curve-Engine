@@ -28,6 +28,7 @@ from .data import (
     load_gsw_parameters,
     load_kim_wright_term_premium,
     load_recession_indicator,
+    load_spf_bill_forecasts,
     load_treasury_yields,
     load_yields_csv,
     maturity_label,
@@ -70,6 +71,8 @@ class PipelineConfig:
     term_premium: bool = True
     #: Months of data before the first pseudo-real-time term premium estimate.
     term_premium_min_train: int = 60
+    #: Also anchor the term premium's expectations to SPF survey forecasts (FRED source).
+    term_premium_surveys: bool = True
 
 
 @dataclass
@@ -99,6 +102,8 @@ class PipelineResult:
     reference: ReferenceComparison | None = None
     reference_name: str | None = None
     acm: termpremium.ACMResult | None = None
+    #: The same model with expectations anchored to SPF surveys (FRED source only).
+    acm_survey: termpremium.ACMResult | None = None
     #: Pseudo-real-time 10-year decomposition (each month estimated on past data only).
     term_premium_real_time: pd.DataFrame | None = None
     #: Other estimates of the 10-year term premium (Kim-Wright, ACM on the Fed's curve).
@@ -216,12 +221,12 @@ def run_pipeline(
         lead_times = regime.inversion_lead_times(regime.to_monthly(spreads["slope"]), recession)
 
     # ---- term premium ---------------------------------------------------------------
-    acm, tp_rt, tp_cmp, tp_rec = None, None, None, None
+    acm, acm_survey, tp_rt, tp_cmp, tp_rec = None, None, None, None, None
     tp_bench: dict[str, pd.Series] = {}
     if cfg.term_premium:
         say("decomposing yields into expected short rates and term premium (ACM)")
         gsw = ref_params if cfg.source == "fred" and true_params is None else None
-        acm, tp_rt, tp_bench, tp_cmp = _term_premium(fit, cfg, gsw)
+        acm, acm_survey, tp_rt, tp_bench, tp_cmp = _term_premium(fit, cfg, gsw)
         if acm is not None and tp_rt is not None and recession is not None and recession.sum() > 0:
             say("testing the expectations and term-premium parts of the spread as predictors")
             tp_rec = _term_premium_recession(spreads["slope"], tp_rt, recession, cfg)
@@ -297,6 +302,7 @@ def run_pipeline(
         reference_name=reference_name if reference is not None else None,
         acm=acm,
         term_premium_real_time=tp_rt,
+        acm_survey=acm_survey,
         term_premium_benchmarks=tp_bench,
         term_premium_comparison=tp_cmp,
         term_premium_recession=tp_rec,
@@ -334,6 +340,7 @@ def _term_premium(
     fit: PanelFit, cfg: PipelineConfig, gsw: pd.DataFrame | None
 ) -> tuple[
     termpremium.ACMResult | None,
+    termpremium.ACMResult | None,
     pd.DataFrame | None,
     dict[str, pd.Series],
     pd.DataFrame | None,
@@ -343,7 +350,12 @@ def _term_premium(
     try:
         acm = termpremium.fit_acm(zeros)
     except (ValueError, np.linalg.LinAlgError):
-        return None, None, {}, None
+        return None, None, None, {}, None
+    acm_survey = None
+    if cfg.source == "fred" and cfg.term_premium_surveys:
+        with contextlib.suppress(DataError, ValueError, np.linalg.LinAlgError):
+            surveys = load_spf_bill_forecasts(end=cfg.end)
+            acm_survey = termpremium.fit_acm(zeros, surveys=surveys)
     tp_rt = None
     if len(zeros) > cfg.term_premium_min_train + 12:
         tp_rt = termpremium.real_time_decomposition(zeros, 10.0, cfg.term_premium_min_train)
@@ -358,6 +370,8 @@ def _term_premium(
         except (ValueError, np.linalg.LinAlgError):
             pass
     estimates = {"ACM on NSS curves (full sample)": acm.decomposition(10)["term_premium"]}
+    if acm_survey is not None:
+        estimates["ACM + SPF surveys (full sample)"] = acm_survey.decomposition(10)["term_premium"]
     if tp_rt is not None:
         estimates["ACM on NSS curves (real time)"] = tp_rt["term_premium"]
     rows = {}
@@ -371,7 +385,7 @@ def _term_premium(
     if rows:
         cmp = pd.DataFrame(rows).T
         cmp.index.names = ["estimate", "benchmark"]
-    return acm, tp_rt, bench, cmp
+    return acm, acm_survey, tp_rt, bench, cmp
 
 
 def _term_premium_recession(
@@ -572,6 +586,15 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
             "fit_rmse_bp_mean": float(r.acm.fit_rmse_bp.mean()),
             "var_max_eigenvalue": r.acm.max_eigenvalue,
         }
+        if r.acm_survey is not None:
+            s["term_premium"]["survey_anchored"] = {
+                "latest": r.acm_survey.decomposition(10).iloc[-1].to_dict(),
+                "mean": float(r.acm_survey.decomposition(10)["term_premium"].mean()),
+                "survey_rmse_pp": r.acm_survey.survey_rmse.to_dict(),
+                "n_surveys": len(r.acm_survey.survey_fit)
+                if r.acm_survey.survey_fit is not None
+                else 0,
+            }
         if r.term_premium_comparison is not None:
             s["term_premium"]["benchmarks"] = {
                 f"{e} vs {b}": row.to_dict() for (e, b), row in r.term_premium_comparison.iterrows()
@@ -711,6 +734,9 @@ def write_outputs(
         if result.term_premium_real_time is not None:
             rt = result.term_premium_real_time.add_suffix("_real_time")
             dec = dec.join(rt, how="left")
+        if result.acm_survey is not None:
+            sv = result.acm_survey.decomposition(10)[["expected_short_rate", "term_premium"]]
+            dec = dec.join(sv.add_suffix("_survey"), how="left")
         paths["term_premium"] = out / "term_premium.csv"
         dec.to_csv(paths["term_premium"], float_format="%.4f")
 

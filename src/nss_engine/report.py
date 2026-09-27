@@ -370,6 +370,15 @@ def _term_premium_section(r: PipelineResult, emit: Callable[[str], None]) -> Non
         f"{tp['max']:+.2f}% ({tp['max_date']}); model fitting error {tp['fit_rmse_bp_mean']:.1f} bp."
     )
     emit("")
+    sv = tp.get("survey_anchored")
+    if sv is not None:
+        emit(
+            "**Anchored to surveys** (the same model, with expected short rates also fitted to "
+            f"{sv['n_surveys']} Survey of Professional Forecasters bill-rate forecasts): expected "
+            f"short rate {sv['latest']['expected_short_rate']:.2f}% + term premium "
+            f"{sv['latest']['term_premium']:+.2f}%."
+        )
+        emit("")
     if r.term_premium_comparison is not None:
         cmp = r.term_premium_comparison.copy()
         cmp.index = [f"{e} vs {b}" for e, b in cmp.index]

@@ -141,14 +141,34 @@ def test_gsw_reference_for_fred_source(monkeypatch, small_market):
     assert r.reference is None and "reference_curve" not in r.summary
 
 
-def test_term_premium_benchmarks_for_fred_source(monkeypatch, long_market):
+def _offline(*args, **kwargs):
+    from nss_engine.data import DataError
+
+    raise DataError("offline")
+
+
+def test_term_premium_benchmarks_for_fred_source(monkeypatch, long_market, tmp_path):
     from nss_engine import pipeline
+    from nss_engine.data import parse_spf_bill_forecasts
+    from nss_engine.report import render_markdown
 
     monthly = long_market.yields.resample("ME").last()
     truth = long_market.true_params
     kw = pd.Series(np.linspace(2.0, 0.0, len(truth)), index=truth.index, name="kim_wright_tp10")
     monkeypatch.setattr(pipeline, "load_gsw_parameters", lambda *a, **k: truth)
     monkeypatch.setattr(pipeline, "load_kim_wright_term_premium", lambda *a, **k: kw)
+    # survey forecasts: next quarter's bill rate = today's 3M yield, ten-year = today's 10Y
+    q = monthly[monthly.index.month.isin([2, 5, 8, 11])]
+    wide = pd.DataFrame(
+        {
+            "YEAR": q.index.year,
+            "QUARTER": (q.index.month + 1) // 3,
+            "TBILL3": q[0.25].to_numpy(),
+            "BILL10": np.where(q.index.month == 2, q[10.0].to_numpy(), np.nan),
+        }
+    )
+    surveys = parse_spf_bill_forecasts(wide)
+    monkeypatch.setattr(pipeline, "load_spf_bill_forecasts", lambda *a, **k: surveys)
     cfg = PipelineConfig(source="fred", freq="ME", run_forecasts=False)
     r = run_pipeline(cfg, data=(monthly, None, None))
     assert set(r.term_premium_benchmarks) == {
@@ -156,7 +176,19 @@ def test_term_premium_benchmarks_for_fred_source(monkeypatch, long_market):
         "ACM on the Fed's GSW curve",
     }
     cmp = r.term_premium_comparison
-    assert len(cmp) == 4  # (full sample, real time) x (two benchmarks)
+    assert len(cmp) == 6  # (full sample, survey-anchored, real time) x (two benchmarks)
+    assert r.acm_survey is not None and r.acm_survey.p_dynamics == "survey"
+    sv = r.summary["term_premium"]["survey_anchored"]
+    assert sv["n_surveys"] == len(surveys)
+    pd.testing.assert_frame_equal(r.acm_survey.fitted, r.acm.fitted)
+    report = render_markdown(r)
+    assert "Anchored to surveys" in report
+    paths = write_outputs(r, tmp_path, dashboard=False)
+    tp_csv = pd.read_csv(paths["term_premium"], index_col=0)
+    assert {"term_premium_survey", "expected_short_rate_survey"} <= set(tp_csv.columns)
+    # without surveys (download failed, or switched off) the rest still runs
+    monkeypatch.setattr(pipeline, "load_spf_bill_forecasts", _offline)
+    assert run_pipeline(cfg, data=(monthly, None, None)).acm_survey is None
     # the engine's curves are close to the "Fed" curve here, so the premia agree
     row = cmp.loc[("ACM on NSS curves (full sample)", "ACM on the Fed's GSW curve")]
     assert row["corr_level"] > 0.9
