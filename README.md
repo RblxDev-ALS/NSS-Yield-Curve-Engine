@@ -210,7 +210,7 @@ every horizon, with or without the restriction.
 In-sample error always favours the model with more parameters. The honest test
 is out of sample: hide one maturity, fit the rest, and predict the hidden yield.
 This uses 441 month-end curves from 1990 to 2026
-([`benchmarks/real_data_studies.py`](benchmarks/real_data_studies.py)):
+([`benchmarks/real_data_studies.py`](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/benchmarks/real_data_studies.py)):
 
 | model | out-of-sample RMSE, 3M–20Y (interpolation) | 30Y (extrapolation) |
 |---|---:|---:|
@@ -248,7 +248,7 @@ To reproduce: `nss-engine run --source fred --start 1990-01-01` and
 | **Risk** | Bond pricing off the curve, plus DV01, duration, convexity, key-rate durations and **factor durations** (exposure to level/slope/curvature). |
 | **Relative value** | Rich/cheap residuals, rolling z-scores with no look-ahead, mean-reversion half-lives, and carry and roll-down. |
 | **Validation** | Every run is compared with the **Federal Reserve's own Svensson curve** (Gürkaynak–Sack–Wright). There is also PCA of yield changes against the NSS loadings, and correlations with model-free factor proxies. |
-| **Outputs** | An interactive dashboard (light/dark), a Markdown report, CSV/JSON exports, live-status badges and a CLI. A scheduled GitHub Action rebuilds it all from live data. A [Colab notebook](examples/tour.ipynb) runs the main analyses in a browser. |
+| **Outputs** | An interactive dashboard (light/dark), a Markdown report, CSV/JSON exports, live-status badges and a CLI. A scheduled GitHub Action rebuilds it all from live data. A [Colab notebook](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/examples/tour.ipynb) runs the main analyses in a browser. |
 
 ## Quick start
 
@@ -300,7 +300,7 @@ acm = fit_acm(zero_panel(fit.params))                       # monthly zero curve
 acm.decomposition(10).tail()                                # yield = expected short rate + term premium
 ```
 
-See [`examples/quickstart.py`](examples/quickstart.py) for risk, carry and uncertainty analytics.
+See [`examples/quickstart.py`](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/examples/quickstart.py) for risk, carry and uncertainty analytics.
 
 ## How the calibration works
 
@@ -340,7 +340,7 @@ fixed decay rates the model is linear in the betas**. So:
 
 The full derivations (forward rates, par yields, the gradient, the probit,
 Diebold–Mariano, factor durations) are in
-**[docs/methodology.md](docs/methodology.md)**.
+**[docs/methodology.md](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/docs/methodology.md)**.
 
 ## Testing and validation
 
@@ -460,7 +460,7 @@ with a 3-D Plotly surface. Version 1.0 rebuilt it from the ground up. Version
 Federal Reserve's curve, and adds robust fitting, uncertainty, a state-space
 model and real-time recession tests. Version 2.1 puts error bars on the
 headline comparisons and walks back a claim they did not support. Version 2.2
-adds the term premium and arbitrage-free dynamics, and a Colab notebook. The [CHANGELOG](CHANGELOG.md) lists what
+adds the term premium and arbitrage-free dynamics, and a Colab notebook. The [CHANGELOG](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/CHANGELOG.md) lists what
 was wrong in each version and how it was fixed.
 
 ## References
@@ -472,7 +472,7 @@ Diebold, Rudebusch & Aruoba (2006); Engstrom & Sharpe (2019); Huber (1964);
 Adrian, Crump & Moench (2013); Christensen, Diebold & Rudebusch (2011); Kim &
 Wright (2005); Rosenberg & Maurer (2008).
 Full citations are in
-[docs/methodology.md](docs/methodology.md#references).
+[docs/methodology.md](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/docs/methodology.md#references).
 
 *Data: Board of Governors of the Federal Reserve System, H.15 Selected Interest
 Rates, via FRED (Federal Reserve Bank of St. Louis); NBER business cycle dates.

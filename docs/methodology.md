@@ -402,6 +402,27 @@ follow from a matrix exponential (Van Loan, 1978), and
 $-\log P(\tau)/\tau = (E[Y_\tau] - \tfrac12\operatorname{Var}Y_\tau)/\tau$ agrees
 with the AFNS yield to $10^{-12}$.
 
+### 5.3 Is one forecast better than another?
+
+Two models are scored on the same forecast origins, so their errors are
+compared origin by origin. `forecasting.compare_forecasts` pools the curve:
+the loss at origin $t$ is the squared error averaged over tenors,
+$L_t = \frac1m\sum_j e_{t,j}^2$, and the Diebold–Mariano statistic is computed
+on $d_t = L^A_t - L^B_t$ with the Harvey–Leybourne–Newbold correction. Errors of
+$h$-step forecasts made every month overlap, so $d_t$ is MA($h-1$) under the
+null; its long-run variance uses a rectangular window of $h-1$ lags, and the
+Bartlett window of the same length when the rectangular estimate is not
+positive (which happens in small samples). A simulation test checks that a
+halved error is detected at 12 months and that equal forecasts are rejected
+close to the nominal 5% of the time.
+
+*Interval coverage.* The share of outcomes inside the 80% interval, averaged
+over tenors at each origin, is a serially correlated series (overlapping
+horizons, persistent misses). `hac_mean_test` gives its mean a Newey–West
+standard error (at least $\max(h-1, 6)$ lags) and tests it against 80%; the
+same test on the origin-by-origin difference between two models tests whether
+one is better calibrated than the other.
+
 ## 6. Term premium (Adrian, Crump & Moench, 2013)
 
 A long yield is the average short rate expected over its life plus a **term
@@ -461,6 +482,63 @@ of the spread, not the term premium, carries its recession signal. The engine
 tests this with the pseudo-real-time probits of §4: the 10y−3m spread, the
 spread minus the real-time 10-year term premium, and the premium alone.
 
+### 6.1 Anchoring expectations: bias correction and surveys
+
+Only the real-world dynamics $(\mu, \Phi)$ are uncertain, so 2.3 offers two
+ways to estimate them better, both keeping ACM's risk-neutral dynamics
+$(\mu - \lambda_0, \Phi - \lambda_1)$ and hence the fitted yields:
+
+**Small-sample bias correction** (Bauer, Rudebusch & Wu, 2012). OLS
+underestimates persistence in short samples, so expected rates revert to their
+mean too fast and long-horizon expectations are too stable. Pope's (1990)
+approximation for a VAR(1) with intercept is
+
+$$
+E[\hat\Phi] - \Phi \approx -\frac{1}{T}\,\Sigma\Big[(I - \Phi^\top)^{-1}
++ \Phi^\top\big(I - \Phi^{\top 2}\big)^{-1}
++ \sum_i \lambda_i\,(I - \lambda_i\Phi^\top)^{-1}\Big]\Gamma_0^{-1},
+$$
+
+with $\lambda_i$ the eigenvalues of $\Phi$ and $\Gamma_0 = \Phi\Gamma_0\Phi^\top +
+\Sigma$ (in one dimension, Kendall's $-(1+3\rho)/T$). `bias_correction="analytic"`
+subtracts it; `"bootstrap"` is BRW's inverse bootstrap: the $\Phi$ whose OLS
+estimates on simulated samples average $\hat\Phi$, found by iterating
+$\Phi \leftarrow \Phi + (\hat\Phi - \overline{\hat\Phi^*(\Phi)})$ with the
+resampled residuals held fixed. Either correction is shrunk until the VAR is
+stationary (Kilian, 1998), and $\mu$ is reset so the factors keep their sample
+mean.
+
+**Survey anchors** (Kim & Wright, 2005; Kim & Orphanides, 2012). The Survey
+of Professional Forecasters asks each quarter for the 3-month bill rate over the
+next four quarters and the next calendar years, and each first quarter since
+1992 for its average over the next ten years (`BILL10`). A forecast published
+at month $t$ of the average over months $s \dots e$ ahead has the model value
+
+$$
+f_t = c_0 + c_1^\top\Big[\bar x + \frac{1}{e-s+1}\sum_{m=s}^{e}\Phi^m(X_t - \bar x)\Big],
+$$
+
+where $c_0 + c_1^\top X_t$ is the model's 3-month yield (from the risk-neutral
+loadings) and $\bar x = (I-\Phi)^{-1}\mu$. `fit_acm(surveys=...)` maximizes the
+joint Gaussian likelihood
+
+$$
+\sum_t v_t^\top\Sigma^{-1}v_t + \sum_i \Big(\frac{f_i - s_i}{\sigma_i}\Big)^2
+$$
+
+over $(\bar x, \Phi)$, with each series' error $\sigma_i$ estimated from the fit
+(at least 0.1 points) and a penalty that keeps the largest root below the
+stationarity cap. Near a unit root $\bar x$ stops mattering to the fit and could
+drift anywhere, which the later cap would expose. Survey dates are the end of
+the survey's middle month (it is released mid-month), quotes are converted from
+the bill discount basis to continuous compounding, and in real time only
+surveys published by each month are used.
+
+*Known truth.* `synthetic.simulate_affine_market` stores its true dynamics and
+simulates SPF-style surveys (true expectations plus noise, optionally biased).
+`benchmarks/term_premium_known_truth.py` runs every estimator on 440-month
+samples with a near-unit-root level, in full sample and in real time.
+
 ## 7. Risk and relative value
 
 * **Pricing** discounts each cash flow on the NSS zero curve.
@@ -496,6 +574,7 @@ spread minus the real-time 10-year term premium, and the premium alone.
 ## References
 
 * Adrian, T., Crump, R. & Moench, E. (2013). Pricing the term structure with linear regressions. *Journal of Financial Economics*.
+* Bauer, M., Rudebusch, G. & Wu, J. C. (2012). Correcting estimation bias in dynamic term structure models. *Journal of Business & Economic Statistics*.
 * Bates, J. & Granger, C. (1969). The combination of forecasts. *Operational Research Quarterly*.
 * Beaton, A. & Tukey, J. (1974). The fitting of power series, meaning polynomials, illustrated on band-spectroscopic data. *Technometrics*.
 * Christensen, J., Diebold, F. & Rudebusch, G. (2011). The affine arbitrage-free class of Nelson–Siegel term structure models. *Journal of Econometrics*.
@@ -513,9 +592,14 @@ spread minus the real-time 10-year term premium, and the premium alone.
 * Ho, T. (1992). Key rate durations: measures of interest rate risks. *Journal of Fixed Income*.
 * Huber, P. (1964). Robust estimation of a location parameter. *Annals of Mathematical Statistics*.
 * Kim, D. & Wright, J. (2005). An arbitrage-free three-factor term structure model and the recent behavior of long-term yields and distant-horizon forward rates. Federal Reserve Board FEDS 2005-33.
+* Kilian, L. (1998). Small-sample confidence intervals for impulse response functions. *Review of Economics and Statistics*.
+* Kim, D. & Orphanides, A. (2012). Term structure estimation with survey data on interest rate forecasts. *Journal of Financial and Quantitative Analysis*.
 * Künsch, H. (1989). The jackknife and the bootstrap for general stationary observations. *Annals of Statistics*.
 * Litterman, R. & Scheinkman, J. (1991). Common factors affecting bond returns. *Journal of Fixed Income*.
 * Nelson, C. & Siegel, A. (1987). Parsimonious modeling of yield curves. *Journal of Business*.
+* Newey, W. & West, K. (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. *Econometrica*.
+* Philadelphia Fed (1968–). Survey of Professional Forecasters. Federal Reserve Bank of Philadelphia.
+* Pope, A. (1990). Biases of estimators in multivariate non-Gaussian autoregressions. *Journal of Time Series Analysis*.
 * Rosenberg, J. & Maurer, S. (2008). Signal or noise? Implications of the term premium for recession forecasting. *FRBNY Economic Policy Review*.
 * Svensson, L. (1994). Estimating and interpreting forward interest rates: Sweden 1992–1994. NBER Working Paper 4871.
 * Timmermann, A. (2006). Forecast combinations. In *Handbook of Economic Forecasting*, vol. 1. Elsevier.
