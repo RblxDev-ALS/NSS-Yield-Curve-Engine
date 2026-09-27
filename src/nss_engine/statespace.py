@@ -497,10 +497,27 @@ class DNSForecastEvaluation:
     interval: float
     n_forecasts: pd.Series
     rmse_combination: pd.DataFrame | None = None  #: RMSE (bp) of ½ model + ½ random walk
+    #: forecast errors (bp) by horizon: origin × tenor
+    errors_model: dict[int, pd.DataFrame] | None = None
+    errors_random_walk: dict[int, pd.DataFrame] | None = None
+    #: 1 where the outcome fell inside the interval, by horizon: origin × tenor
+    inside: dict[int, pd.DataFrame] | None = None
 
     @property
     def relative_rmse(self) -> pd.DataFrame:
         return self.rmse_model / self.rmse_random_walk
+
+    def errors(self, h: int, forecast: str = "model") -> pd.DataFrame:
+        """Forecast errors at horizon ``h``: ``"model"``, ``"random_walk"`` or ``"combination"``."""
+        if self.errors_model is None or self.errors_random_walk is None:
+            raise ValueError("forecast errors were not stored")
+        if forecast == "model":
+            return self.errors_model[h]
+        if forecast == "random_walk":
+            return self.errors_random_walk[h]
+        if forecast == "combination":
+            return (self.errors_model[h] + self.errors_random_walk[h]) / 2.0
+        raise ValueError("forecast must be 'model', 'random_walk' or 'combination'")
 
     @property
     def relative_rmse_combination(self) -> pd.DataFrame:
@@ -535,6 +552,7 @@ def evaluate_dns_forecasts(
     err_m: dict[int, list[FloatArray]] = {h: [] for h in horizons}
     err_rw: dict[int, list[FloatArray]] = {h: [] for h in horizons}
     inside: dict[int, list[FloatArray]] = {h: [] for h in horizons}
+    origins: dict[int, list[object]] = {h: [] for h in horizons}
     est: DNSResult | None = None
     params: DNSParameters | None = None
     for t in range(min_train - 1, T - 1):
@@ -568,6 +586,7 @@ def evaluate_dns_forecasts(
             actual = y[t + h]
             err_m[h].append((actual - mean) * 100.0)
             err_rw[h].append((actual - y[t]) * 100.0)
+            origins[h].append(yields.index[t])
             inside[h].append(np.where(np.isfinite(actual), np.abs(actual - mean) <= z * sd, np.nan))
 
     def agg(d: dict[int, list[FloatArray]], fn: str) -> pd.DataFrame:
@@ -581,6 +600,13 @@ def evaluate_dns_forecasts(
         frame.index.name = "horizon"
         return frame
 
+    def frames(d: dict[int, list[FloatArray]]) -> dict[int, pd.DataFrame]:
+        out = {}
+        for h in horizons:
+            values = np.array(d[h]) if d[h] else np.empty((0, mats.size))
+            out[h] = pd.DataFrame(values, index=pd.Index(origins[h], name="origin"), columns=labels)
+        return out
+
     return DNSForecastEvaluation(
         rmse_model=agg(err_m, "rmse"),
         rmse_random_walk=agg(err_rw, "rmse"),
@@ -590,4 +616,7 @@ def evaluate_dns_forecasts(
         rmse_combination=agg(
             {h: combination_errors(err_m[h], err_rw[h]) for h in horizons}, "rmse"
         ),
+        errors_model=frames(err_m),
+        errors_random_walk=frames(err_rw),
+        inside=frames(inside),
     )

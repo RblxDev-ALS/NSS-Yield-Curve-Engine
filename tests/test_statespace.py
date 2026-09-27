@@ -131,6 +131,17 @@ def test_rolling_evaluation():
     # 80% intervals hold. (With ~70 months of training, estimation error that the
     # intervals ignore makes them far too narrow.)
     assert 0.7 < np.nanmean(cov) < 0.9
+    # per-origin errors are stored and reproduce the summary tables
+    e6 = ev.errors(6)
+    assert e6.shape == (65, y.shape[1]) and e6.index[0] == y.index[229]
+    np.testing.assert_allclose(np.sqrt((e6**2).mean()), ev.rmse_model.loc[6])
+    np.testing.assert_allclose(
+        np.sqrt((ev.errors(1, "combination") ** 2).mean()), ev.rmse_combination.loc[1]
+    )
+    np.testing.assert_allclose(np.sqrt((ev.errors(1, "random_walk") ** 2).mean()), ev.rmse_random_walk.loc[1])
+    np.testing.assert_allclose(ev.inside[6].mean(), ev.coverage.loc[6])
+    with pytest.raises(ValueError):
+        ev.errors(1, "oracle")
 
 
 def test_measurement_noise_has_a_floor(fitted):

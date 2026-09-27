@@ -62,6 +62,53 @@ def test_diebold_mariano():
     assert np.isnan(forecasting.diebold_mariano(good[:5], e_bench[:5], 1)[0])
 
 
+def test_diebold_mariano_on_overlapping_forecasts():
+    # 12-step errors are MA(11); a forecast with half the error is still
+    # detected, and two of equal quality are not told apart much more than 5% of
+    # the time.
+    rng = np.random.default_rng(4)
+    h, n = 12, 600
+
+    def ma(scale):
+        eps = rng.normal(0, scale, n + h)
+        return np.convolve(eps, np.ones(h), "valid")[:n]
+
+    stat, p = forecasting.diebold_mariano(ma(0.5), ma(1.0), h)
+    assert stat < 0 and p < 0.05
+    rejections = sum(forecasting.diebold_mariano(ma(1.0), ma(1.0), h)[1] < 0.05 for _ in range(200))
+    assert rejections < 25
+
+
+def test_compare_forecasts_pools_tenors_and_aligns_origins():
+    rng = np.random.default_rng(5)
+    idx = pd.date_range("2000-01-31", periods=300, freq="ME")
+    a = pd.DataFrame(rng.normal(0, 8, (300, 3)), index=idx, columns=["2Y", "5Y", "10Y"])
+    b = pd.DataFrame(rng.normal(0, 10, (300, 3)), index=idx, columns=["2Y", "5Y", "10Y"])
+    out = forecasting.compare_forecasts(a, b.iloc[10:], h=1)
+    assert out["n"] == 290
+    assert out["ratio"] == pytest.approx(out["rmse_a"] / out["rmse_b"])
+    assert out["rmse_a"] == pytest.approx(np.sqrt((a.iloc[10:] ** 2).to_numpy().mean()))
+    assert out["dm_stat"] < 0 and out["p_value"] < 0.01
+    same = forecasting.compare_forecasts(a, a, h=1)
+    assert same["ratio"] == 1.0 and np.isnan(same["dm_stat"])
+
+
+def test_hac_mean_test():
+    rng = np.random.default_rng(6)
+    hits = (rng.random(500) < 0.8).astype(float)
+    res = forecasting.hac_mean_test(hits, 0.8)
+    assert res["mean"] == pytest.approx(hits.mean())
+    assert res["se"] == pytest.approx(0.018, abs=0.004)
+    assert abs(res["t"]) < 3
+    low = forecasting.hac_mean_test((rng.random(500) < 0.7).astype(float), 0.8)
+    assert low["t"] < -3 and low["p_value"] < 0.01
+    # persistent series: the HAC error is wider than the naive one
+    ar = np.repeat(rng.random(50) < 0.8, 10).astype(float)
+    naive = ar.std() / np.sqrt(ar.size)
+    assert forecasting.hac_mean_test(ar, 0.8, lags=12)["se"] > 1.5 * naive
+    assert np.isnan(forecasting.hac_mean_test(np.ones(5))["se"])
+
+
 def test_evaluate_forecasts_beats_random_walk_on_mean_reverting_curve():
     """Strongly mean-reverting factors: the model must beat 'no change' at long horizons."""
     rng = np.random.default_rng(4)
