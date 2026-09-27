@@ -45,7 +45,7 @@ full-sample series after a 5-year start).
 
 **Does it matter for recessions?** Rosenberg & Maurer (2008) found the
 expectations component, not the premium, carries the spread's recession
-signal. RECESSION_SPLIT_SENTENCE
+signal. Here, splitting it with both parts estimated in real time with survey anchors was a negative result: from 2005 the expectations component was significantly *worse* than the plain spread (out-of-sample AUC 0.13 vs 0.45), and nothing beat a coin flip in that window (two recessions plus the 2022–24 inversion).
 
 **Forecast tests.** Diebold–Mariano (HLN-corrected, loss pooled over tenors)
 and Newey–West tests of 80% interval coverage: the random walk beats every

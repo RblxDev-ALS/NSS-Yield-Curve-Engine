@@ -296,6 +296,7 @@ def _term_premium_chart(r: PipelineResult, t: _Theme) -> Any:
     ax.axhline(0, color=t.axis, lw=1)
     for name, s, color, lw in series:
         ax.plot(s.index, s.to_numpy(), color=color, lw=lw, label=name, solid_capstyle="round")
+    _clip_outliers(ax, series, t)
     ends = sorted(
         ((float(s.dropna().iloc[-1]), name, s, c) for name, s, c, _ in series), key=lambda v: v[0]
     )
@@ -310,6 +311,38 @@ def _term_premium_chart(r: PipelineResult, t: _Theme) -> Any:
         labels.append("NBER recession")
     _legend(fig, handles, labels, t)
     return fig
+
+
+def _clip_outliers(ax: Any, series: list[tuple[str, pd.Series, str, float]], t: _Theme) -> None:
+    """Fit the y-axis to the bulk of the data and label the points left off scale.
+
+    The first real-time estimates of plain ACM, from five years of data, can be
+    several points away from everything else; one such month would flatten the
+    whole chart. They are not hidden: each series' most extreme off-scale value
+    is written at the edge of the plot.
+    """
+    values = np.concatenate([s.dropna().to_numpy() for _, s, _, _ in series])
+    lo, hi = np.percentile(values, [0.5, 99.5])
+    pad = 0.12 * (hi - lo)
+    lo, hi = min(lo - pad, 0.0), hi + pad
+    ax.set_ylim(lo, hi)
+    for name, s, color, _ in series:
+        s = s.dropna()
+        for side, mask in (("below", s < lo), ("above", s > hi)):
+            if not mask.any():
+                continue
+            worst = s[mask].idxmin() if side == "below" else s[mask].idxmax()
+            y = lo if side == "below" else hi
+            ax.annotate(
+                f"{name}: {s[worst]:+.1f}% in {worst:%b %Y} (off scale)",
+                (worst, y),
+                xytext=(6, 8 if side == "below" else -8),
+                textcoords="offset points",
+                va="bottom" if side == "below" else "top",
+                fontsize=8.5,
+                color=t.ink2,
+            )
+            ax.plot([worst], [y], marker="v" if side == "below" else "^", ms=6, color=color)
 
 
 def _legend(fig: Any, handles: list[Any], labels: list[str], t: _Theme) -> None:

@@ -456,7 +456,7 @@ def _inflation_section(r: PipelineResult, emit: Callable[[str], None]) -> None:
         "The TIPS real curve is fitted the same way as the nominal one (Nelson-Siegel on "
         "4-5 par yields, 5 to 30 years). Breakeven inflation is the nominal minus the real "
         "zero-coupon yield; the 5y5y forward breakeven is the average breakeven from 5 to 10 "
-        "years ahead, the Fed's favourite gauge of long-run inflation expectations. "
+        "years ahead, a gauge the Fed watches for long-run inflation expectations. "
         "Breakevens include an inflation risk premium and a TIPS liquidity discount, so they "
         "are inflation *compensation*, not a pure forecast."
     )

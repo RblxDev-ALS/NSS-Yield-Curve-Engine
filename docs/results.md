@@ -22,6 +22,7 @@ Contents: [fitting the curve](#fitting-the-curve) ·
 | Agreement with the **Federal Reserve's own curve** (1–30Y zero rates) | RMSE **10.0 bp** with par fitting vs 16.3 bp reading quotes as zero rates. Weekly changes correlate 0.97 |
 | Calibration speed | ~26 ms per curve (par fit), so 36 years of weekly curves take about 70 s |
 | Model-implied vs observed 10Y−3M spread | correlation **0.999**, mean absolute gap 5 bp |
+| Latest reading (24 September 2026) | 10Y zero yield 5.18% = **4.02%** expected short rate + **1.16%** term premium (survey-anchored; plain ACM 1.91%). 10Y−3M +1.04 pp; recession odds 8% (NY Fed-style probit) |
 
 ### The quotes are par yields
 
@@ -215,15 +216,35 @@ blocks) includes zero:
 Putting both signals in one model looks best in sample and is the worst out of
 sample, the classic sign of overfitting with too few recessions.
 
-### Expectations or term premium?
+### Expectations or term premium? A negative result
 
 Rosenberg & Maurer (2008) found that the recession signal of the spread comes
-from its expectations component, not from the term premium. With plain ACM's
-noisy real-time premium (2.2), no curve signal beat a coin flip on the 238
-months from 2006 where all had a real-time value (AUC 0.50 for 10Y−3M, 0.44
-for the expectations component, 0.24 for the premium). 2.4 reruns the test
-with the survey-anchored real-time premium; the result is in the
-[live studies](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml).
+from its expectations component (the spread minus the term premium), not from
+the premium. 2.2 could not test this properly because plain ACM's real-time
+premium was too noisy. With the survey-anchored premium, re-estimated each
+month on data and surveys published by then, the split is finally stable, so
+2.4 reruns the test. Month-end 10Y−3M spread, probits 12 months ahead, scored
+in pseudo-real time on the 238 months (from 2005) where every signal has a
+real-time value:
+
+| signal | AUC out of sample | gain vs the spread, 90% interval |
+|---|---:|---:|
+| 10Y−3M spread | 0.45 | |
+| expectations component, plain ACM | 0.41 | −0.05 [−0.09, +0.01] |
+| term premium, plain ACM | 0.41 | −0.05 [−0.36, +0.28] |
+| expectations component, **survey-anchored** | **0.13** | **−0.32 [−0.54, −0.02]** |
+| term premium, survey-anchored | 0.46 | +0.00 [−0.61, +0.37] |
+| both parts, survey-anchored | 0.28 | −0.18 [−0.27, +0.01] |
+
+**Rosenberg & Maurer's result does not hold in this sample.** No curve signal
+beats a coin flip from 2005 on, and the survey-anchored expectations component
+is *significantly worse* than the spread it comes from. Waiting a year for NBER
+to date each recession changes nothing (spread 0.50, expectations component
+0.16, interval [−0.59, −0.01]; 226 months). The window holds only two
+recessions, one caused by a pandemic, and the 2022–24 inversion, when markets
+and forecasters expected rate cuts that came without a recession. That is the
+most likely reason the expectations component misfires, and also why this
+result says little about longer samples.
 
 ## Breakeven inflation
 
@@ -245,6 +266,29 @@ breakevens):
 FRED's `T5YIE`/`T10YIE` are differences of par yields and `T5YIFR` compounds
 them as if they were zero rates; on noiseless quotes that alone is off by
 2.6 bp at 5 years. The engine's error without noise is under 1 bp.
+
+**On real data** (1,157 weekly curves, July 2004 to September 2026; FRED's TIPS
+series only have four maturities from mid-2004): the real curve fits the TIPS
+quotes to 1.15 bp (median; 95th percentile 5.3 bp). The Fed publishes its own
+TIPS curve (Gürkaynak, Sack & Wright, 2010), so its zero-coupon breakevens are
+an independent benchmark for both the engine and FRED's series (267 month-ends):
+
+| vs the Fed's zero-coupon breakevens | corr. | RMSE | mean gap |
+|---|---:|---:|---:|
+| engine, 5Y | 0.975 | 13.8 bp | −1.5 bp |
+| FRED `T5YIE` | 0.980 | 12.2 bp | −0.9 bp |
+| **engine, 10Y** | **0.980** | **8.2 bp** | −1.0 bp |
+| FRED `T10YIE` | 0.974 | 10.6 bp | −5.0 bp |
+| **engine, 5y5y forward** | **0.885** | **20.4 bp** | **−0.5 bp** |
+| FRED `T5YIFR` | 0.809 | 26.9 bp | −9.1 bp |
+
+The engine is closer to the Fed at 10 years and for the 5y5y forward, where
+FRED's shortcut is 9 bp too low on average; FRED's 5-year series is slightly
+closer at 5 years. As a check of the machinery, the engine's *par* breakevens
+reproduce FRED's `T5YIE` and `T10YIE` to 5.6 and 6.5 bp (correlation 0.996 and
+0.988). In the sample the 5y5y breakeven ranged from 0.78% (December 2008) to
+3.15% (April 2011); on 24 September 2026 it was 2.35%, with a 10-year real
+yield of 2.85% and a 10-year breakeven of 2.33%.
 
 ## Forecasting
 

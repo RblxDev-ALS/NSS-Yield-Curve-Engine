@@ -42,6 +42,22 @@
 * Real-data studies: the recession split test with plain and survey-anchored
   real-time premia (also with NBER dates known only 12 months late), and a
   breakeven study against FRED and the Fed's TIPS curve.
+
+### Results on FRED data
+* **Breakevens** (weekly, July 2004 – September 2026): the real curve fits the
+  TIPS quotes to 1.15 bp (median). Against the Fed's own zero-coupon
+  breakevens the engine's 10-year and 5y5y breakevens have RMSE 8.2 and
+  20.4 bp, FRED's `T10YIE` and `T5YIFR` 10.6 and 26.9 bp (the latter 9 bp too
+  low on average); at 5 years FRED is slightly closer (12.2 vs 13.8 bp).
+* **Recessions, expectations vs term premium** (a negative result): with the
+  survey-anchored real-time split, the expectations component predicts
+  recessions *worse* than the 10Y−3M spread out of sample (AUC 0.13 vs 0.45,
+  90% interval on the difference [−0.54, −0.02], 238 months from 2005); no
+  curve signal beats a coin flip in that window. Rosenberg & Maurer's result
+  is not confirmed.
+* Latest reading (24 September 2026): 10Y zero yield 5.18% = 4.02% expected
+  short rate + 1.16% term premium (survey-anchored; plain ACM 1.91%); 10-year
+  breakeven 2.33%, 5y5y 2.35%, 10-year real yield 2.85%.
 * `docs/results.md` collects the detailed results; the README is shorter.
 * MIT license metadata in the package.
 

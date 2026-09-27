@@ -480,7 +480,11 @@ same ACM model run on the Fed's GSW curve, as ACM do.
 *Recessions.* Rosenberg & Maurer (2008) find that the expectations component
 of the spread, not the term premium, carries its recession signal. The engine
 tests this with the pseudo-real-time probits of §4: the 10y−3m spread, the
-spread minus the real-time 10-year term premium, and the premium alone.
+spread minus the real-time 10-year term premium, and the premium alone. Since
+2.4 the split uses the survey-anchored real-time premium when surveys are
+available. On FRED data from 2005 the expectations component does *worse*
+than the spread (out-of-sample AUC 0.13 vs 0.45, 90% interval on the
+difference [−0.54, −0.02]); see docs/results.md.
 
 ### 6.1 Anchoring expectations: bias correction and surveys
 
@@ -630,7 +634,11 @@ instead of estimating it is worse (5y5y 9.1 bp with noise, 6.5 bp without).
 
 *Real data.* The engine's breakevens are compared with FRED's three series and
 with the Fed's own TIPS curve (Gürkaynak, Sack & Wright, 2010, `feds200805`),
-whose zero-coupon breakevens are its nominal curve minus its TIPS curve.
+whose zero-coupon breakevens are its nominal curve minus its TIPS curve. From
+2004 to 2026, against the Fed's breakevens, the engine's 10-year and 5y5y
+breakevens are closer (8.2 and 20.4 bp RMSE) than FRED's `T10YIE` and
+`T5YIFR` (10.6 and 26.9 bp); at 5 years FRED is slightly closer (12.2 vs
+13.8 bp).
 
 *Caveats.* Breakevens are inflation *compensation*: expected inflation plus an
 inflation risk premium minus a TIPS liquidity premium, which was large in

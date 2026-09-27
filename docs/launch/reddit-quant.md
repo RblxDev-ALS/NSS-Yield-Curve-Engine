@@ -35,7 +35,7 @@ stationarity cap binds in 63–92% of real-time months.
 **Recessions.** Probits scored in pseudo-real time with only recessions known
 at each date. The near-term forward spread beats 10Y−3M (AUC 0.71 vs 0.61),
 but the 90% block-bootstrap interval on the gain includes zero.
-RECESSION_SPLIT_SENTENCE
+Splitting the spread Rosenberg–Maurer style into expectations and term premium, both estimated in real time with survey anchors, was a negative result: from 2005 the expectations component was significantly *worse* than the plain spread (out-of-sample AUC 0.13 vs 0.45), and nothing beat a coin flip in that window (two recessions plus the 2022–24 inversion).
 
 **Forecasting.** Diebold–Li, Kalman-filter DNS and AFNS all lose to the random
 walk at 1 month (DM p < 0.001). Half model, half random walk ties it at 6–12
@@ -45,7 +45,7 @@ horizon; I originally claimed the opposite and the coverage test corrected me.
 **Breakevens (new).** TIPS real curve and 5y5y forward breakevens from fitted
 zero curves. On simulated markets FRED's T5YIE/T5YIFR formulas are off by
 2.6 bp even with perfect quotes; the curve-based numbers are within 1 bp.
-BREAKEVEN_SENTENCE
+On real data, against the Fed's own TIPS curve, the engine's 5y5y breakeven is 20 bp RMSE away vs 27 bp for FRED's T5YIFR (which is 9 bp too low on average); at 5 years FRED's series is slightly closer (12 vs 14 bp).
 
 Repo: https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine
 Live dashboard: https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/dashboard.html

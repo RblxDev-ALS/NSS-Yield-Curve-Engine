@@ -38,9 +38,11 @@ inversions included.
 
 The 10-year **term premium** as it would have been estimated at each date,
 using only data published by then. The textbook model (ACM, blue) swings with
-every re-estimation. Anchoring its expected rates to the Survey of
-Professional Forecasters (orange) makes it stable and brings it close to the
-Fed Board's Kim–Wright estimate.
+every re-estimation and sits about a point above the Fed Board's Kim–Wright
+estimate (grey). Anchoring its expected rates to the Survey of Professional
+Forecasters (orange) makes it stable and brings it much closer to Kim–Wright.
+On 24 September 2026: a 5.18% ten-year zero yield = 4.02% expected short rate
++ 1.16% term premium.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/recession-dark.png">
@@ -48,7 +50,9 @@ Fed Board's Kim–Wright estimate.
 </picture>
 
 **Recession odds** from the curve, in sample and in pseudo-real time (only
-recessions known at each date).
+recessions known at each date). The 2022–24 inversion pushed the real-time
+model to 90% with no recession so far: four recessions since 1990 are not
+much to learn from.
 
 ## Install
 
@@ -71,12 +75,13 @@ tables and tests are in **[docs/results.md](docs/results.md)**.
 |---|---|
 | **Fitting the curve** | Median error **3.8 bp** over 1,917 weekly curves. **10.0 bp** from the Federal Reserve's own curve, against 16.3 bp the textbook way: FRED's yields are *par* yields, not the zero rates most Nelson–Siegel code assumes ([research note](docs/par-vs-zero.md)). |
 | **Term premium** | The survey-anchored 10-year premium is within **28 bp** RMSE of Kim–Wright (plain ACM: 123 bp) and tracks a model-free survey premium best (correlation 0.89). Estimated in real time it agrees **0.91–0.94** with its own full-sample series; plain ACM 0.43–0.70. |
-| **Breakeven inflation** | New: TIPS real curve, breakevens and the 5y5y forward. On simulated markets with a known truth the engine's breakevens are closer to it than FRED's own formulas (5y5y: 7.8 vs 10.2 bp). |
-| **Recessions** | The near-term forward spread beats the classic 10Y−3M spread out of sample (AUC 0.71 vs 0.61), but with three recessions to score, the 90% interval on the gain includes zero. |
+| **Breakeven inflation** | New: TIPS real curve, breakevens and the 5y5y forward. Against the Fed's own TIPS curve, the engine's 5y5y breakeven is closer (20 bp RMSE) than FRED's published `T5YIFR` (27 bp, 9 bp too low on average); on simulated markets it beats FRED's formulas at every maturity. |
+| **Recessions** | The near-term forward spread beats the classic 10Y−3M spread out of sample (AUC 0.71 vs 0.61), but with three recessions to score, the 90% interval on the gain includes zero. Splitting the spread into expected rates and term premium (Rosenberg & Maurer) does **not** help: from 2005 the expectations component is significantly *worse* than the spread. |
 | **Forecasts** | **The random walk still wins.** Every model loses to "no change" at 1 month (Diebold–Mariano p < 0.001); half model, half random walk only ties it at 6–12 months (p ≥ 0.49). |
 
 Negative results stay in: robust fitting moves the curve *away* from the
-Fed's, bias-corrected VARs make the real-time premium worse, and the
+Fed's, bias-corrected VARs make the real-time premium worse, the
+expectations/term-premium split does not predict recessions, and the
 arbitrage-free model's forecast intervals are significantly too wide.
 
 ## What it does
