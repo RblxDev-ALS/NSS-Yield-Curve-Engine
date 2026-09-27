@@ -193,3 +193,101 @@ def test_load_kim_wright_term_premium(monkeypatch):
     assert s.name == "kim_wright_tp5" and list(s) == [0.4]
     with pytest.raises(ValueError):
         data.load_kim_wright_term_premium(maturity=30)
+
+
+# ---- Survey of Professional Forecasters ---------------------------------------------
+
+
+def test_spf_bill_windows():
+    from nss_engine.data import spf_bill_windows
+
+    # a first-quarter survey is dated end-February: month 1 = March
+    assert spf_bill_windows("TBILL3", 1) == (2, 4)  # Q2 = April-June
+    assert spf_bill_windows("TBILL6", 3) == (11, 13)
+    assert spf_bill_windows("TBILLB", 1) == (11, 22)  # next January-December
+    assert spf_bill_windows("TBILLB", 4) == (2, 13)  # survey end-November
+    assert spf_bill_windows("TBILLD", 2) == (32, 43)
+    assert spf_bill_windows("BILL10", 1) == (1, 120)
+    for bad in ("TBILL2", "TBILLA", "CPI10"):
+        with pytest.raises(ValueError):
+            spf_bill_windows(bad, 1)
+
+
+def test_discount_to_continuous():
+    from nss_engine.data import discount_to_continuous
+
+    np.testing.assert_allclose(discount_to_continuous([5.0])[0], 5.102, atol=1e-3)
+    assert discount_to_continuous(0.0) == 0.0
+    # always above the discount rate
+    r = np.linspace(0.1, 15, 20)
+    assert np.all(discount_to_continuous(r) > r)
+
+
+SPF_WIDE = pd.DataFrame(
+    {
+        "YEAR": [1992, 1992, 1993],
+        "QUARTER": [1, 2, 1],
+        "TBILL1": [4.0, 3.9, 3.0],
+        "TBILL3": [4.1, 3.8, 3.2],
+        "TBILL6": [4.6, 4.2, 3.9],
+        "TBILLB": [5.0, 4.8, np.nan],
+        "BILL10": [5.5, np.nan, 5.0],
+    }
+)
+
+
+def test_parse_spf_bill_forecasts():
+    from nss_engine.data import discount_to_continuous, parse_spf_bill_forecasts
+
+    out = parse_spf_bill_forecasts(SPF_WIDE)
+    assert list(out.columns) == ["date", "series", "start", "end", "value", "quoted"]
+    assert len(out) == 3 + 3 + 2 + 2  # TBILL3, TBILL6, TBILLB, BILL10 where present
+    first = out[out["date"] == pd.Timestamp("1992-02-29")]
+    assert set(first["series"]) == {"TBILL3", "TBILL6", "TBILLB", "BILL10"}
+    row = out[(out["series"] == "TBILL3") & (out["date"] == pd.Timestamp("1992-05-31"))].iloc[0]
+    assert (row["start"], row["end"], row["quoted"]) == (2, 4, 3.8)
+    assert row["value"] == pytest.approx(discount_to_continuous(3.8))
+    assert "TBILL1" not in set(out["series"])  # past quarters are not forecasts
+    with pytest.raises(DataError):
+        parse_spf_bill_forecasts(SPF_WIDE.drop(columns="YEAR"))
+
+
+def test_load_spf_bill_forecasts_downloads_caches_and_falls_back(tmp_path, monkeypatch):
+    pytest.importorskip("openpyxl")
+    import io
+
+    def xlsx(df):
+        buf = io.BytesIO()
+        df.to_excel(buf, index=False)
+        return buf.getvalue()
+
+    files = {
+        "median_tbill_level": xlsx(SPF_WIDE.drop(columns="BILL10")),
+        "median_bill10_level": xlsx(SPF_WIDE[["YEAR", "QUARTER", "BILL10"]]),
+    }
+    calls = []
+
+    def fake(url, **kwargs):
+        calls.append(url)
+        return files[url.rsplit("/", 1)[1].removesuffix(".xlsx")]
+
+    monkeypatch.setattr(data, "_http_get_bytes", fake)
+    out = data.load_spf_bill_forecasts(cache_dir=tmp_path)
+    assert len(calls) == 2 and len(out) == 10
+    again = data.load_spf_bill_forecasts(cache_dir=tmp_path, start="1993-01-01")
+    assert len(calls) == 2 and set(again["date"]) == {pd.Timestamp("1993-02-28")}
+
+    def boom(url, **kwargs):
+        raise DataError("offline")
+
+    monkeypatch.setattr(data, "_http_get_bytes", boom)
+    with pytest.warns(RuntimeWarning, match="stale"):
+        stale = data.load_spf_bill_forecasts(cache_dir=tmp_path, refresh=True)
+    pd.testing.assert_frame_equal(stale, out)
+    with pytest.raises(DataError):
+        data.load_spf_bill_forecasts(cache_dir=tmp_path / "empty")
+    with pytest.raises(ValueError):
+        data.load_spf_bill_forecasts(statistic="mode")
+    monkeypatch.setattr(data, "_http_get_bytes", lambda url, **k: b"not a spreadsheet")
+    with pytest.raises(DataError):
+        data.load_spf_bill_forecasts(cache_dir=tmp_path / "bad")

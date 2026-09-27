@@ -158,6 +158,49 @@ class AffineMarket:
     yields: pd.DataFrame  #: zero yields (percent), columns 1/12 … max_months/12 years
     term_premium: pd.DataFrame  #: true term premium (percent), same shape
     factors: pd.DataFrame  #: true state variables
+    mu: np.ndarray | None = None  #: real-world VAR intercept (percent)
+    phi: np.ndarray | None = None  #: real-world VAR slope
+    bill_loadings: tuple[float, np.ndarray] | None = None  #: 3-month yield = c0 + c1'X
+
+    def expected_bill_rate(self, start: int, end: int) -> pd.Series:
+        """True expectation, at each date, of the average 3-month yield ``start…end`` months ahead."""
+        if self.mu is None or self.phi is None or self.bill_loadings is None:
+            raise ValueError("market has no stored dynamics")
+        c0, c1 = self.bill_loadings
+        k = self.phi.shape[0]
+        xbar = np.linalg.solve(np.eye(k) - self.phi, self.mu)
+        powers = [np.linalg.matrix_power(self.phi, m) for m in range(start, end + 1)]
+        W = np.mean(powers, axis=0)
+        D = self.factors.to_numpy() - xbar
+        return pd.Series(c0 + c1 @ xbar + D @ W.T @ c1, index=self.factors.index)
+
+    def surveys(
+        self,
+        windows: dict[str, tuple[int, int]] | None = None,
+        every: int = 3,
+        noise_pp: float = 0.1,
+        bias_pp: float = 0.0,
+        seed: int = 0,
+    ) -> pd.DataFrame:
+        """Simulated survey forecasts of the 3-month yield in the SPF format.
+
+        Every ``every`` months, each window gets the true expectation plus
+        ``bias_pp`` and N(0, ``noise_pp``²) noise; the ten-year window
+        (``"BILL10"``) is surveyed once a year, as in the SPF.
+        """
+        windows = windows or {"Q1": (2, 4), "Q2": (5, 7), "Q4": (11, 13), "BILL10": (1, 120)}
+        rng = np.random.default_rng(seed)
+        rows = []
+        for name, (start, end) in windows.items():
+            step = 12 if name == "BILL10" else every
+            exp = self.expected_bill_rate(start, end).iloc[::step]
+            vals = exp.to_numpy() + bias_pp + rng.normal(0.0, noise_pp, exp.size)
+            rows.append(
+                pd.DataFrame(
+                    {"date": exp.index, "series": name, "start": start, "end": end, "value": vals}
+                )
+            )
+        return pd.concat(rows, ignore_index=True).sort_values(["date", "start"], ignore_index=True)
 
 
 def simulate_affine_market(
@@ -166,6 +209,7 @@ def simulate_affine_market(
     noise_bp: float = 0.0,
     max_months: int = 120,
     start: str = "1970-01-31",
+    level_persistence: float = 0.97,
 ) -> AffineMarket:
     """Simulate a monthly three-factor Gaussian affine term structure model.
 
@@ -176,18 +220,24 @@ def simulate_affine_market(
     in U.S. data. Samples too long for pandas timestamps (past the year 2262)
     get a plain integer index. Because the true risk-neutral yields are known, the term
     premium estimated by :func:`~nss_engine.termpremium.fit_acm` can be
-    checked against the truth.
+    checked against the truth. ``level_persistence`` is the monthly
+    autocorrelation of the level under the real-world measure (U.S. rates are
+    closer to a unit root than the default 0.97, which is where small-sample
+    bias matters most). The risk-neutral dynamics, and so the cross-section of
+    yields, do not depend on it: the difference goes into the price of level
+    risk.
     """
     from .termpremium import affine_loadings
 
     rng = np.random.default_rng(seed)
-    phi = np.array([[0.97, 0.0, 0.0], [0.0, 0.93, 0.06], [0.0, 0.0, 0.85]])
+    phi = np.array([[level_persistence, 0.0, 0.0], [0.0, 0.93, 0.06], [0.0, 0.0, 0.85]])
     mean = np.array([5.0, -1.5, 0.0])
     mu = (np.eye(3) - phi) @ mean
     chol = np.diag([0.25, 0.30, 0.40])
     delta1 = np.array([1.0, 1.0, 0.0]) / 1200.0
     lambda0 = np.array([-0.13, 0.0, 0.0])
     lambda1 = np.zeros((3, 3))
+    lambda1[0, 0] = level_persistence - 0.97  # risk-neutral level persistence stays 0.97
     lambda1[0, 1] = -0.06
     X = np.empty((periods, 3))
     X[0] = mean
@@ -209,4 +259,7 @@ def simulate_affine_market(
         yields=pd.DataFrame(noisy, index=index, columns=cols),
         term_premium=pd.DataFrame(fitted - risk_neutral, index=index, columns=cols),
         factors=pd.DataFrame(X, index=index, columns=["level", "slope", "curvature"]),
+        mu=mu,
+        phi=phi,
+        bill_loadings=(float(-A[2] / 3 * 1200.0), -B[2] / 3 * 1200.0),
     )
