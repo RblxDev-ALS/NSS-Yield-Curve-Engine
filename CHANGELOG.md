@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.3.0 — survey-anchored term premium, significance tests, PyPI
+
+### Added
+* **Survey-anchored term premium** (`fit_acm(surveys=...)`): the real-world
+  dynamics are estimated jointly from the pricing factors and the Survey of
+  Professional Forecasters' 3-month bill forecasts (1–4 quarters, 1–3 calendar
+  years and 10 years ahead), as Kim & Wright and Kim & Orphanides discipline
+  expectations with surveys. The cross-section, and so the fitted yields, is
+  unchanged; only the split into expectations and premium moves.
+  `data.load_spf_bill_forecasts` downloads and caches the Philadelphia Fed's
+  files (`pip install nss-engine[surveys]` for `openpyxl`).
+* **Bias-corrected VAR** (`fit_acm(bias_correction="analytic" | "bootstrap")`):
+  Pope's closed-form small-sample bias, or Bauer, Rudebusch & Wu's inverse
+  bootstrap, each shrunk to stationarity as in Kilian (1998).
+* **Known-truth test** of all four estimators
+  (`benchmarks/term_premium_known_truth.py`): `simulate_affine_market` now
+  stores its true dynamics, simulates SPF-style surveys, and takes a
+  `level_persistence`.
+* **Diebold–Mariano tests between forecasts** (`forecasting.compare_forecasts`,
+  pooled over tenors) and Newey–West tests of interval coverage
+  (`forecasting.hac_mean_test`); the state-space evaluation keeps every
+  forecast error (`DNSForecastEvaluation.errors`).
+* **PyPI release workflow** (trusted publishing on a `v*` tag, with a build
+  check on every packaging change) and [docs/releasing.md](docs/releasing.md).
+
+### Fixed
+* `simulate_affine_market(level_persistence=0.99)` would have made the level
+  and slope load identically on every yield, leaving part of the state
+  invisible to any yield-based model; the risk-neutral dynamics no longer
+  depend on the real-world persistence.
+
 ## 2.2.0 — term premium, arbitrage-free dynamics, easier to use
 
 ### Added

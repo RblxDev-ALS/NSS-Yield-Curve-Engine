@@ -28,3 +28,18 @@ def test_tour_notebook_uses_existing_api():
         (analytics, "risk_report"),
     ]:
         assert hasattr(mod, name)
+
+
+def test_version_is_the_same_everywhere():
+    # the release workflow publishes the version in pyproject.toml when a tag
+    # v<version> is pushed; the package and the citation file must agree
+    import re
+
+    import nss_engine
+
+    root = Path(__file__).resolve().parents[1]
+    pyproject = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(), re.M)
+    citation = re.search(r"^version: (\S+)", (root / "CITATION.cff").read_text(), re.M)
+    changelog = re.search(r"^## (\d+\.\d+\.\d+)", (root / "CHANGELOG.md").read_text(), re.M)
+    assert pyproject and citation and changelog
+    assert pyproject.group(1) == nss_engine.__version__ == citation.group(1) == changelog.group(1)

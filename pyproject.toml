@@ -4,13 +4,19 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nss-engine"
-version = "2.2.0"
+version = "2.3.0"
 description = "Nelson-Siegel-Svensson yield curve engine: robust calibration, curve analytics, macro regime detection and factor forecasting for the U.S. Treasury curve."
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["yield curve", "nelson-siegel", "svensson", "fixed income", "term structure", "quantitative finance"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
     "Intended Audience :: Financial and Insurance Industry",
     "Intended Audience :: Science/Research",
     "Topic :: Office/Business :: Financial :: Investment",
@@ -24,7 +30,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+surveys = [
+    "openpyxl>=3.1",  # reads the Philadelphia Fed's Survey of Professional Forecasters files
+]
 dev = [
+    "openpyxl>=3.1",
     "pytest>=7.4",
     "pytest-cov>=4.1",
     "hypothesis>=6.90",
@@ -38,9 +48,15 @@ nss-engine = "nss_engine.cli:main"
 
 [project.urls]
 Repository = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine"
+Documentation = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/docs/methodology.md"
+Changelog = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/CHANGELOG.md"
+Issues = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nss_engine"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "examples", "README.md", "CHANGELOG.md", "CITATION.cff"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

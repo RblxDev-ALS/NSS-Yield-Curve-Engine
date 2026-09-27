@@ -21,7 +21,7 @@ from .statespace import DNSResult, afns_yield_adjustment, fit_dns
 from .termpremium import ACMResult, fit_acm, real_time_decomposition, zero_panel
 from .validation import ReferenceComparison, compare_to_reference
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 __all__ = [
     "DIEBOLD_LI_LAMBDA",
