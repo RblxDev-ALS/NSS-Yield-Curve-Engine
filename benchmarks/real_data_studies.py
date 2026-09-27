@@ -15,7 +15,13 @@
    With ``--source synthetic`` the reference is the known true curve.
 4. **Term premium.** The Adrian-Crump-Moench 10-year premium with 3-6
    factors, on this engine's curves and on the Fed's, against Kim-Wright.
-5. **State-space dynamic Nelson-Siegel.** Kalman-filter/MLE forecasts
+5. **Which part of the slope predicts recessions?** The 10Y−3M spread split
+   into expected short rates and term premium, both estimated in real time,
+   with and without survey anchors (Rosenberg & Maurer, 2008).
+6. **Breakeven inflation.** The TIPS real curve and breakevens against FRED's
+   T5YIE / T10YIE / T5YIFR and the Fed's own TIPS curve (Gürkaynak, Sack &
+   Wright, 2010).
+7. **State-space dynamic Nelson-Siegel.** Kalman-filter/MLE forecasts
    (Diebold, Rudebusch & Aruoba, 2006), with a mean-reverting or a
    random-walk level, independent factors, and the arbitrage-free AFNS
    restriction (Christensen, Diebold & Rudebusch, 2011), against the random
@@ -44,13 +50,24 @@ from nss_engine.calibration import (
 )
 from nss_engine.data import (
     DataError,
+    load_breakevens,
     load_gsw_parameters,
+    load_gsw_tips_parameters,
     load_kim_wright_term_premium,
+    load_recession_indicator,
     load_spf_bill_forecasts,
+    load_tips_yields,
     load_treasury_yields,
     maturity_label,
 )
 from nss_engine.forecasting import compare_forecasts, evaluate_forecasts, hac_mean_test
+from nss_engine.inflation import (
+    breakevens,
+    compare_series,
+    fit_real_curve,
+    fred_style_breakevens,
+)
+from nss_engine.regime import compare_recession_predictors
 from nss_engine.statespace import DNSForecastEvaluation, evaluate_dns_forecasts
 from nss_engine.synthetic import simulate_market
 from nss_engine.termpremium import (
@@ -179,21 +196,32 @@ def main() -> None:
     if reference is not None:
         gsw_study(monthly, reference, args.source)
 
-    # ---- 4. term premium robustness ---------------------------------------------------
+    # ---- 4. term premium robustness, and 5. its recession test --------------------------
     if args.source == "fred":
-        term_premium_study(monthly, reference)
+        real_time = term_premium_study(monthly, reference)
+        if real_time:
+            recession_split_study(monthly, real_time, args.start)
+
+    # ---- 6. breakeven inflation -----------------------------------------------------------
+    if args.source == "fred":
+        breakeven_study(args.start)
 
     # ---- 5. state-space dynamic Nelson-Siegel ------------------------------------------
     dns_study(core, fc)
 
 
-def term_premium_study(monthly: pd.DataFrame, reference: pd.DataFrame | None) -> None:
-    """ACM 10-year term premium vs Kim-Wright, by number of factors and source curve."""
+def term_premium_study(
+    monthly: pd.DataFrame, reference: pd.DataFrame | None
+) -> dict[str, pd.DataFrame]:
+    """ACM 10-year term premium vs Kim-Wright, by number of factors and source curve.
+
+    Returns the real-time decompositions started after 60 months, by method.
+    """
     try:
         kw = load_kim_wright_term_premium(start=monthly.index[0])
     except DataError as exc:
         print(f"\n(Kim-Wright term premium unavailable: {exc})\n")
-        return
+        return {}
     fit = calibrate_panel(monthly, CalibrationConfig(lambda_smoothing=DEFAULT_PANEL_SMOOTHING))
     curves = {"NSS curves (this engine)": zero_panel(fit.params)}
     if reference is not None:
@@ -216,10 +244,10 @@ def term_premium_study(monthly: pd.DataFrame, reference: pd.DataFrame | None) ->
         "(ACM − Kim-Wright, bp). ACM's own choice is 5 factors on the Fed's curve.\n"
     )
     print(table.round(3).to_markdown())
-    anchored_term_premium_study(curves["NSS curves (this engine)"], kw)
+    return anchored_term_premium_study(curves["NSS curves (this engine)"], kw)
 
 
-def anchored_term_premium_study(nss: pd.DataFrame, kw: pd.Series) -> None:
+def anchored_term_premium_study(nss: pd.DataFrame, kw: pd.Series) -> dict[str, pd.DataFrame]:
     """Real-world dynamics from OLS, bias-corrected OLS or survey anchors, full and real time."""
     t0 = time.perf_counter()
     try:
@@ -294,11 +322,14 @@ def anchored_term_premium_study(nss: pd.DataFrame, kw: pd.Series) -> None:
             print(pd.DataFrame(srow).T.round(3).to_markdown())
 
     rt_rows = {}
+    first_rt: dict[str, pd.DataFrame] = {}
     for min_train in (60, 120, 180):
         for name, kwargs in methods.items():
             if kwargs.get("bias_correction") == "bootstrap":
                 continue  # ~5x slower than the analytic correction, and no better on known truth
             rt = real_time_decomposition(nss, 10.0, min_train=min_train, **kwargs)
+            if min_train == 60:
+                first_rt[name] = rt
             tp = rt["term_premium"].dropna()
             vs_kw = compare_term_premia(tp, kw)
             own = full[name].reindex(tp.index)
@@ -322,6 +353,150 @@ def anchored_term_premium_study(nss: pd.DataFrame, kw: pd.Series) -> None:
     table = pd.DataFrame(rt_rows).T
     table.index.names = ["first estimate", "real-world dynamics"]
     print(table.to_markdown(floatfmt=".3f"))
+    print(f"\n({time.perf_counter() - t0:.0f} s)")
+    return first_rt
+
+
+def recession_split_study(
+    monthly: pd.DataFrame, real_time: dict[str, pd.DataFrame], start: str
+) -> None:
+    """Rosenberg & Maurer (2008): expectations component vs term premium as recession signals.
+
+    The 10Y−3M spread (month-end CMT quotes) is split into the 10-year term
+    premium and the rest, the expectations component, using the real-time
+    decompositions, so no split uses data from after its date. Every
+    candidate is scored in pseudo-real time on the same forecast months.
+    """
+    try:
+        rec = load_recession_indicator(start)
+    except DataError as exc:
+        print(f"\n(NBER recession dates unavailable: {exc})\n")
+        return
+    spread = (monthly[10.0] - monthly[0.25]).rename("spread")
+    spread.index = spread.index.to_period("M").to_timestamp("M")
+    candidates: dict[str, pd.Series | pd.DataFrame] = {}
+    labels = {"OLS (ACM)": "plain ACM", "survey-anchored (SPF)": "survey-anchored"}
+    frames = {}
+    for name, rt in real_time.items():
+        if name not in labels:
+            continue
+        tp = rt["term_premium"].copy()
+        tp.index = pd.DatetimeIndex(tp.index).to_period("M").to_timestamp("M")
+        frames[labels[name]] = tp
+    if not frames:
+        return
+    both = pd.concat([spread, *[v.rename(k) for k, v in frames.items()]], axis=1).dropna()
+    candidates["10Y−3M spread"] = both["spread"]
+    for label in frames:
+        candidates[f"expectations component ({label})"] = both["spread"] - both[label]
+        candidates[f"term premium ({label})"] = both[label]
+        candidates[f"both parts ({label})"] = pd.DataFrame(
+            {"exp": both["spread"] - both[label], "tp": both[label]}
+        )
+    for lag in (0, 12):
+        try:
+            table = compare_recession_predictors(candidates, rec, 12, publication_lag=lag)
+        except ValueError as exc:
+            print(f"\n(recession split test failed: {exc})")
+            return
+        cols = [
+            "auc_in_sample",
+            "auc_out_of_sample",
+            "log_score_out_of_sample",
+            "brier_out_of_sample",
+            "auc_gain_vs_first",
+            "auc_gain_lo90",
+            "auc_gain_hi90",
+        ]
+        when = "" if lag == 0 else ", NBER dates known only 12 months late"
+        print(f"\n## Which part of the slope predicts recessions? (real-time split{when})\n")
+        print(
+            "Rosenberg & Maurer (2008): spread = expectations component + 10-year term premium, "
+            "both from the ACM model re-estimated every month on past data (first estimate after "
+            f"60 months). Probits 12 months ahead, pseudo-real time, "
+            f"{int(table['n_forecasts'].iloc[0])} common forecast months "
+            f"from {both.index[0] + pd.offsets.MonthEnd(120):%Y-%m} or later; AUC gains vs the "
+            "spread with 90% block-bootstrap intervals.\n"
+        )
+        print(table[cols].round(3).to_markdown())
+
+
+def breakeven_study(start: str) -> None:
+    """TIPS real curve and breakeven inflation vs FRED's measures and the Fed's TIPS curve."""
+    t0 = time.perf_counter()
+    try:
+        real = load_tips_yields(max(pd.Timestamp(start), pd.Timestamp("2003-01-01")), freq="W-FRI")
+        nominal = load_treasury_yields(real.index[0] - pd.Timedelta(days=7), freq="W-FRI")
+    except DataError as exc:
+        print(f"\n(TIPS yields unavailable: {exc})\n")
+        return
+    nom_fit = calibrate_panel(nominal)
+    real_fit = fit_real_curve(real)
+    be = breakevens(nom_fit.params, real_fit.params)
+    diag = real_fit.diagnostics
+    print(
+        f"\n## Breakeven inflation ({len(be)} weekly curves, {be.index[0]:%Y-%m} to "
+        f"{be.index[-1]:%Y-%m})\n"
+    )
+    print(
+        f"TIPS real curve (Nelson-Siegel on 4-5 par yields): median fit RMSE "
+        f"{diag['rmse_bp'].median():.2f} bp, 95th percentile {diag['rmse_bp'].quantile(0.95):.2f} bp, "
+        f"{diag['success'].mean():.1%} converged.\n"
+    )
+    last = be.iloc[-1]
+    print(
+        f"Latest ({be.index[-1]:%Y-%m-%d}): real 10Y {last['real_10y']:.2f}%, breakevens "
+        f"5Y {last['be_5y']:.2f}%, 10Y {last['be_10y']:.2f}%, 5y5y {last['be_5y5y']:.2f}%; "
+        f"par-yield breakevens 5Y {last['be_par_5y']:.2f}%, 10Y {last['be_par_10y']:.2f}%.\n"
+    )
+    refs: dict[str, pd.Series] = {}
+    try:
+        fred = load_breakevens(be.index[0])
+        refs.update({f"FRED {c}": fred[c] for c in fred.columns})
+    except DataError as exc:
+        print(f"(FRED breakevens unavailable: {exc})")
+    try:
+        gsw_n = load_gsw_parameters(start=be.index[0])
+        gsw_r = load_gsw_tips_parameters(start=be.index[0])
+        gsw_be = breakevens(gsw_n, gsw_r)
+        refs.update({f"Fed GSW {c}": gsw_be[c] for c in ("be_5y", "be_10y", "be_5y5y")})
+    except (DataError, ValueError) as exc:
+        print(f"(Fed TIPS curve unavailable: {exc})")
+    quotes = fred_style_breakevens(nominal, real)
+    pairs = {
+        ("engine be_par_5y", "FRED T5YIE"): (be["be_par_5y"], "FRED T5YIE"),
+        ("engine be_par_10y", "FRED T10YIE"): (be["be_par_10y"], "FRED T10YIE"),
+        ("FRED formula on weekly quotes (T5YIFR)", "FRED T5YIFR"): (
+            quotes["T5YIFR"],
+            "FRED T5YIFR",
+        ),
+        ("engine be_5y5y", "FRED T5YIFR"): (be["be_5y5y"], "FRED T5YIFR"),
+        ("engine be_5y", "Fed GSW be_5y"): (be["be_5y"], "Fed GSW be_5y"),
+        ("engine be_10y", "Fed GSW be_10y"): (be["be_10y"], "Fed GSW be_10y"),
+        ("engine be_5y5y", "Fed GSW be_5y5y"): (be["be_5y5y"], "Fed GSW be_5y5y"),
+        ("FRED T5YIE", "Fed GSW be_5y"): ("FRED T5YIE", "Fed GSW be_5y"),
+        ("FRED T10YIE", "Fed GSW be_10y"): ("FRED T10YIE", "Fed GSW be_10y"),
+        ("FRED T5YIFR", "Fed GSW be_5y5y"): ("FRED T5YIFR", "Fed GSW be_5y5y"),
+    }
+    rows = {}
+    for key, (est, ref) in pairs.items():
+        e = refs.get(est) if isinstance(est, str) else est
+        if e is None or ref not in refs:
+            continue
+        try:
+            rows[key] = compare_series(e, refs[ref])
+        except ValueError:
+            continue
+    if rows:
+        table = pd.DataFrame(rows).T
+        table.index.names = ["estimate", "benchmark"]
+        print(
+            "Agreement on month-end values (RMSE and mean gap in bp; gap = estimate − benchmark). "
+            "`be_par` is the engine's nominal minus real *par* yield, what FRED's T5YIE/T10YIE "
+            "measure; `be_5y`, `be_10y` are zero-coupon breakevens; the Fed GSW rows subtract the "
+            "Fed's TIPS zero curve from its nominal one.\n"
+        )
+        print(table.round(3).to_markdown())
     print(f"\n({time.perf_counter() - t0:.0f} s)")
 
 
