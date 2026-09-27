@@ -745,16 +745,16 @@ def write_outputs(
         result.reference.summary().to_csv(paths["reference"], float_format="%.3f")
 
     paths["summary"] = out / "summary.json"
-    paths["summary"].write_text(json.dumps(result.summary, indent=2, default=str))
+    paths["summary"].write_text(json.dumps(result.summary, indent=2, default=str), encoding="utf-8")
 
     badge_dir = out / "badges"
     badge_dir.mkdir(exist_ok=True)
     for name, badge in badges(result).items():
         paths[f"badge_{name}"] = badge_dir / f"{name}.json"
-        paths[f"badge_{name}"].write_text(json.dumps(badge))
+        paths[f"badge_{name}"].write_text(json.dumps(badge), encoding="utf-8")
 
     paths["report"] = out / "report.md"
-    paths["report"].write_text(render_markdown(result))
+    paths["report"].write_text(render_markdown(result), encoding="utf-8")
 
     if dashboard:
         from .viz import build_dashboard

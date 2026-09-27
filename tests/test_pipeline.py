@@ -82,20 +82,20 @@ def test_write_outputs(result, tmp_path):
     assert {"beta0", "lambda2", "rmse_bp"} <= set(params.columns)
     signals = pd.read_csv(paths["signals"], index_col=0)
     assert {"regime", "slope", "recession_prob_12m"} <= set(signals.columns)
-    report = paths["report"].read_text()
+    report = paths["report"].read_text(encoding="utf-8")
     assert "Synthetic data" in report and "Recession probability" in report
     assert "Validation against the true curve" in report and "zero_95ci_bp" in report
     assert "pseudo-real time" in report and "State-space dynamic Nelson-Siegel" in report
     assert paths["outliers"].exists() and paths["reference"].exists()
     assert "Term premium (Adrian-Crump-Moench)" in report
-    badge = json.loads(paths["badge_regime"].read_text())
+    badge = json.loads(paths["badge_regime"].read_text(encoding="utf-8"))
     assert badge["schemaVersion"] == 1
     assert badge["message"].split()[0] in {"Inverted", "Flat", "Normal", "Steep"}
     assert {"badge_recession", "badge_term_premium", "badge_as_of"} <= set(paths)
-    assert json.loads(paths["badge_recession"].read_text())["message"].endswith("%")
+    assert json.loads(paths["badge_recession"].read_text(encoding="utf-8"))["message"].endswith("%")
     tp = pd.read_csv(paths["term_premium"], index_col=0)
     assert {"expected_short_rate", "term_premium", "term_premium_real_time"} <= set(tp.columns)
-    html = paths["dashboard"].read_text()
+    html = paths["dashboard"].read_text(encoding="utf-8")
     assert html.count("plotly-graph-div") >= 8
     assert 'src="https://cdn.plot.ly' in html  # default: load plotly.js from the CDN
     # plotly.js must load before the first chart on the page
@@ -106,7 +106,7 @@ def test_write_outputs(result, tmp_path):
 
 def test_offline_dashboard_embeds_plotly(result, tmp_path):
     paths = write_outputs(result, tmp_path, offline=True)
-    html = paths["dashboard"].read_text()
+    html = paths["dashboard"].read_text(encoding="utf-8")
     assert 'src="https://cdn.plot.ly' not in html and len(html) > 3_000_000
 
 
@@ -251,3 +251,24 @@ class TestCLI:
         with pytest.raises(SystemExit):
             cli.main(["--version"])
         assert "nss-engine" in capsys.readouterr().out
+
+
+def test_text_files_are_written_as_utf8_on_any_platform():
+    # Windows defaults to cp1252, which cannot encode the report's Greek letters
+    # and minus signs: every text read or write must name its encoding.
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "src" / "nss_engine"
+    offenders = []
+    for path in src.glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"\.(write_text|read_text)\(|\bopen\(", text):
+            depth, j = 1, m.end()
+            while depth:
+                depth += {"(": 1, ")": -1}.get(text[j], 0)
+                j += 1
+            call = text[m.start() : j]
+            if "encoding=" not in call and "urlopen" not in text[m.start() - 7 : m.end()]:
+                offenders.append(f"{path.name}: {call[:60]}")
+    assert not offenders, offenders

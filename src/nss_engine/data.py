@@ -200,7 +200,7 @@ def fetch_fred_series(
 
 
 def _read_cached(path: Path, series_id: str) -> pd.Series:
-    s = parse_fred_csv(path.read_text(), series_id)
+    s = parse_fred_csv(path.read_text(encoding="utf-8"), series_id)
     s.name = series_id
     return s
 
@@ -558,7 +558,7 @@ def _cached_text(
     path = cache / f"{key}.csv"
     fresh = path.exists() and (time.time() - path.stat().st_mtime) / 3600.0 <= max_age_hours
     if fresh and not refresh:
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
     try:
         text = _http_get(url, timeout=120.0)
     except DataError:
@@ -568,10 +568,10 @@ def _cached_text(
             warnings.warn(
                 f"download of {url} failed; using stale cache {path}", RuntimeWarning, stacklevel=3
             )
-            return path.read_text()
+            return path.read_text(encoding="utf-8")
         raise
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return text
 
 

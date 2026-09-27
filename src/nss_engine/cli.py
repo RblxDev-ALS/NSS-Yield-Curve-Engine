@@ -106,7 +106,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     for name, path in paths.items():
         print(f"  {name:<13} {path}")
     if args.print_report:
-        print("\n" + paths["report"].read_text())
+        print("\n" + paths["report"].read_text(encoding="utf-8"))
     return 0
 
 
@@ -206,6 +206,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Reports use Greek letters and typographic minus signs; a legacy console
+    # code page (cp1252 on Windows) would raise on them, so replace instead.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="replace")
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))

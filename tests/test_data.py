@@ -162,12 +162,15 @@ def test_panel_from_fred_columns():
 
 def test_load_yields_csv_accepts_several_column_styles(tmp_path):
     path = tmp_path / "y.csv"
-    path.write_text("date,DGS10,3M,2Y,0.5\n2024-01-05,4.0,5.3,4.4,5.2\n2024-01-12,4.1,.,4.3,5.1\n")
+    path.write_text(
+        "date,DGS10,3M,2Y,0.5\n2024-01-05,4.0,5.3,4.4,5.2\n2024-01-12,4.1,.,4.3,5.1\n",
+        encoding="utf-8",
+    )
     df = load_yields_csv(path)
     assert list(df.columns) == [0.25, 0.5, 2.0, 10.0]
     assert np.isnan(df.loc["2024-01-12", 0.25])
     bad = tmp_path / "bad.csv"
-    bad.write_text("date,foo\n2024-01-05,1\n")
+    bad.write_text("date,foo\n2024-01-05,1\n", encoding="utf-8")
     with pytest.raises(DataError):
         load_yields_csv(bad)
 
