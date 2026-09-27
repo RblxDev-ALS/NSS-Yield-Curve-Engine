@@ -1,14 +1,16 @@
 [build-system]
-requires = ["hatchling>=1.21"]
+requires = ["hatchling>=1.27", "hatch-fancy-pypi-readme>=24.1"]
 build-backend = "hatchling.build"
 
 [project]
 name = "nss-engine"
-version = "2.3.0"
-description = "Nelson-Siegel-Svensson yield curve engine: robust calibration, curve analytics, macro regime detection and factor forecasting for the U.S. Treasury curve."
-readme = "README.md"
+version = "2.4.0"
+description = "U.S. Treasury yield curve engine: Nelson-Siegel-Svensson fits since 1990, a survey-anchored term premium, breakeven inflation, recession signals and forecasts, all tested out of sample."
+dynamic = ["readme"]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
-keywords = ["yield curve", "nelson-siegel", "svensson", "fixed income", "term structure", "quantitative finance"]
+keywords = ["yield curve", "nelson-siegel", "svensson", "fixed income", "term structure", "term premium", "breakeven inflation", "quantitative finance"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
@@ -33,14 +35,19 @@ dependencies = [
 surveys = [
     "openpyxl>=3.1",  # reads the Philadelphia Fed's Survey of Professional Forecasters files
 ]
+figures = [
+    "matplotlib>=3.7",  # static PNG charts (nss-engine run --figures)
+]
 dev = [
     "openpyxl>=3.1",
+    "matplotlib>=3.7",
     "pytest>=7.4",
     "pytest-cov>=4.1",
     "hypothesis>=6.90",
     "ruff>=0.5",
     "mypy>=1.8",
     "tabulate>=0.9",  # DataFrame.to_markdown in benchmarks/
+    "markdown>=3.5",  # website/build.py
 ]
 
 [project.scripts]
@@ -48,6 +55,7 @@ nss-engine = "nss_engine.cli:main"
 
 [project.urls]
 Repository = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine"
+Homepage = "https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/"
 Documentation = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/docs/methodology.md"
 Changelog = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/CHANGELOG.md"
 Issues = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/issues"
@@ -56,7 +64,23 @@ Issues = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/issues"
 packages = ["src/nss_engine"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "docs", "examples", "README.md", "CHANGELOG.md", "CITATION.cff"]
+include = ["src", "tests", "docs", "examples", "README.md", "CHANGELOG.md", "CITATION.cff", "LICENSE"]
+
+# PyPI shows README.md without the repository around it: point relative links
+# at GitHub and relative images at their raw files.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '(src|srcset)="(?!https?://)([^"]+)"'
+replacement = '\1="https://raw.githubusercontent.com/RblxDev-ALS/NSS-Yield-Curve-Engine/main/\2"'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\((?!https?://|#)([^)]+)\)'
+replacement = '](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/\1)'
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

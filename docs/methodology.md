@@ -537,9 +537,108 @@ surveys published by each month are used.
 *Known truth.* `synthetic.simulate_affine_market` stores its true dynamics and
 simulates SPF-style surveys (true expectations plus noise, optionally biased).
 `benchmarks/term_premium_known_truth.py` runs every estimator on 440-month
-samples with a near-unit-root level, in full sample and in real time.
+samples with a near-unit-root level, in full sample and in real time. Over 8
+simulated markets (level persistence 0.99), the real-time 10-year premium
+misses the truth by:
 
-## 7. Risk and relative value
+| real-world dynamics | real-time RMSE vs truth | corr. with own full-sample series |
+|---|---:|---:|
+| OLS (plain ACM) | 82 bp | 0.66 |
+| bias-corrected, analytic | 81 bp | |
+| bias-corrected, bootstrap | 84 bp | |
+| **survey-anchored** | **13 bp** | **0.97** |
+| survey-anchored, surveys biased +0.5 pp | 53 bp | |
+
+Bias correction does not help here; surveys do, and even surveys that are
+half a point too high throughout beat no surveys at all.
+
+*On FRED data* (1990–2026, 10-year premium; Kim–Wright is FRED `THREEFYTP10`):
+
+| full sample | mean | corr. with KW | corr. of 12-month changes | RMSE vs KW | mean gap vs KW |
+|---|---:|---:|---:|---:|---:|
+| plain ACM | 1.83% | 0.96 | 0.75 | 123 bp | +101 bp |
+| bias-corrected, analytic | | | 0.46 | 113 bp | |
+| bias-corrected, bootstrap | | | 0.37 | 117 bp | |
+| **survey-anchored** | **0.76%** | **0.95** | **0.82** | **28 bp** | **−7 bp** |
+
+A model-free check: the 10-year zero yield minus the SPF's own 10-year bill
+forecast (35 first quarters, 1992–2026) is a survey-based premium that uses no
+model at all. The survey-anchored estimate correlates 0.89 with it (mean gap
++11 bp), Kim–Wright 0.83 (+22 bp), plain ACM 0.80 (+118 bp).
+
+| real time, first estimate after | 5 years | 10 years | 15 years |
+|---|---:|---:|---:|
+| corr. with own full-sample series: plain ACM | 0.43 | 0.58 | 0.70 |
+| … survey-anchored | **0.94** | **0.91** | **0.92** |
+| corr. with KW: plain ACM | 0.24 | 0.38 | 0.49 |
+| … survey-anchored | **0.94** | **0.91** | **0.85** |
+| RMSE vs KW: plain ACM | 101–112 bp | | |
+| … survey-anchored | 45–50 bp | | |
+
+Surveys are fitted to 0.17 pp RMSE one quarter ahead, rising to 0.47 pp three
+years ahead, and 0.41 pp for the ten-year average. Bias correction in real
+time is a negative result: it makes the real-time series more consistent with
+its own full-sample estimate (0.58–0.92) but moves it *away* from Kim–Wright
+(correlation 0.00–0.45), and the stationarity cap binds in 63–92% of months,
+so the corrected VAR is mostly the cap.
+
+## 7. Real yields and breakeven inflation
+
+FRED publishes TIPS constant-maturity real yields at 5, 7, 10, 20 and 30 years
+(`DFII5` … `DFII30`; the 30-year only since 2010). Like the nominal CMT series
+they are semi-annual par yields, so the real curve is fitted with the same
+par-yield calibrator (§2.4). With four or five quotes, NSS's six parameters
+would outnumber the data, so the real curve is **Nelson–Siegel** (four
+parameters; the calibrator falls back to NS below seven quotes anyway), with the
+curvature hump kept between 3 and 30 years ($0.06 \le \lambda \le 0.6$) and the
+same week-to-week smoothing as the nominal curve.
+
+From the nominal curve $z_N$ and the real curve $z_R$ (both continuously
+compounded zero rates):
+
+* zero-coupon **breakeven inflation** $b(\tau) = z_N(\tau) - z_R(\tau)$;
+* the **5y5y forward breakeven** $\frac{10\,b(10) - 5\,b(5)}{5}$, the average
+  instantaneous forward breakeven from 5 to 10 years;
+* the **par breakeven**, nominal minus real *par* yield at the same maturity,
+  which is what FRED's `T5YIE` and `T10YIE` measure (a difference of quotes).
+
+FRED's `T5YIFR` compounds the two par breakevens as if they were zero rates,
+$\big((1+b_{10})^{10}/(1+b_5)^5\big)^{1/5}-1$. A difference of par yields mixes the
+coupons of two different bonds and is not a point on any zero curve, so this
+shortcut is biased whenever the curves slope.
+
+*Known truth.* `synthetic.simulate_tips_market` builds TIPS quotes from a
+nominal `simulate_market`: the true breakeven curve is an NSS curve with the
+nominal decay rates and its own moving betas (level near 2.4%, a slope and
+curvature that can collapse short breakevens as in 2008), and the true real
+curve is the nominal curve minus it, a six-parameter curve that a
+four-parameter fit to 4–5 quotes cannot match exactly, as with real TIPS.
+`benchmarks/breakeven_known_truth.py` (4 simulated markets, weekly 2003–2025):
+
+| method | 5Y breakeven | 10Y breakeven | 5y5y forward |
+|---|---:|---:|---:|
+| engine, 3 bp quote noise | **3.1 bp** | **3.6 bp** | **7.8 bp** |
+| FRED's formulas on the same quotes | 5.4 bp | 5.3 bp | 10.2 bp |
+| engine, no noise | **0.5 bp** | **0.3 bp** | **0.6 bp** |
+| FRED's formulas, no noise | 3.2 bp | 3.1 bp | 3.5 bp |
+
+(RMSE against the true zero-coupon breakevens.) Without noise the engine's
+error is the misspecification of the four-parameter real curve, under 1 bp;
+FRED's formulas carry a bias of +2.6 bp at 5 years and +1.6 bp at 10 years from
+reading par differences as zero rates. Fixing $\lambda$ at the Diebold–Li value
+instead of estimating it is worse (5y5y 9.1 bp with noise, 6.5 bp without).
+
+*Real data.* The engine's breakevens are compared with FRED's three series and
+with the Fed's own TIPS curve (Gürkaynak, Sack & Wright, 2010, `feds200805`),
+whose zero-coupon breakevens are its nominal curve minus its TIPS curve.
+
+*Caveats.* Breakevens are inflation *compensation*: expected inflation plus an
+inflation risk premium minus a TIPS liquidity premium, which was large in
+2008. TIPS index to CPI with a three-month lag, CPI is seasonal, and new TIPS
+carry a deflation floor; none of these is modelled. They matter most at short
+maturities, and nothing below five years is quoted or reported.
+
+## 8. Risk and relative value
 
 * **Pricing** discounts each cash flow on the NSS zero curve.
 * **Effective duration and convexity** come from ±1 bp parallel bumps.
@@ -555,7 +654,7 @@ samples with a near-unit-root level, in full sample and in real time.
   data (the test perturbs the last observation and checks earlier values do not
   change). AR(1) half-lives measure how quickly mispricings correct.
 
-## 8. Limitations
+## 9. Limitations
 
 * CMT yields are interpolated on-the-run par yields, not prices of individual
   bonds. Residuals are therefore a *curve-shape* signal, not directly tradeable
@@ -566,7 +665,9 @@ samples with a near-unit-root level, in full sample and in real time.
   they start from are not.
 * Term premium estimates are model-dependent and uncertain; different models
   disagree by tens of basis points, mostly because long-run expectations hinge
-  on how persistent rates are estimated to be.
+  on how persistent rates are estimated to be. Survey anchors pin that down,
+  but only as far as the surveys are right.
+* Breakevens mix expected inflation with risk and liquidity premia (§7).
 * The probit rests on a handful of recessions (four since 1990). Its
   probabilities are indicative and have wide uncertainty, which the
   pseudo-real-time evaluation makes visible.
@@ -588,6 +689,7 @@ samples with a near-unit-root level, in full sample and in real time.
 * Gilli, M., Große, S. & Schumann, E. (2010). Calibrating the Nelson–Siegel–Svensson model. COMISEF working paper.
 * Golub, G. & Pereyra, V. (1973). The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate. *SIAM Journal on Numerical Analysis*.
 * Gürkaynak, R., Sack, B. & Wright, J. (2007). The U.S. Treasury yield curve: 1961 to the present. *Journal of Monetary Economics*.
+* Gürkaynak, R., Sack, B. & Wright, J. (2010). The TIPS yield curve and inflation compensation. *American Economic Journal: Macroeconomics*.
 * Harvey, D., Leybourne, S. & Newbold, P. (1997). Testing the equality of prediction mean squared errors. *International Journal of Forecasting*.
 * Ho, T. (1992). Key rate durations: measures of interest rate risks. *Journal of Fixed Income*.
 * Huber, P. (1964). Robust estimation of a location parameter. *Annals of Mathematical Statistics*.

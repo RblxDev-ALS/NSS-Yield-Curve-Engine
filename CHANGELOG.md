@@ -1,5 +1,53 @@
 # Changelog
 
+## 2.4.0 — survey-anchored term premium by default, breakeven inflation, website
+
+### Changed (affects results)
+* **The survey-anchored term premium is the headline estimate** whenever the
+  SPF surveys can be downloaded: in the pipeline, report, dashboard, badges
+  and CLI. Plain ACM is reported next to it (`summary["term_premium"]["plain_acm"]`).
+  On FRED data the survey-anchored premium is closer to Kim–Wright (RMSE 28 bp
+  vs 123 bp), to a model-free survey premium (correlation 0.89 vs 0.80) and,
+  estimated in real time, to its own full-sample series (0.91–0.94 vs
+  0.43–0.70); see 2.3.0 below and [docs/results.md](docs/results.md).
+* The pipeline also re-estimates the survey-anchored premium every month on
+  past data (`term_premium_real_time_survey`, about three minutes on FRED data;
+  `--fast` skips it), and the recession test of the expectations component
+  and the term premium (Rosenberg & Maurer) uses that series.
+* The AFNS forecast-interval claim is reversed (see 2.3.0 below).
+
+### Added
+* **Real yields and breakeven inflation** (`nss_engine.inflation`): the TIPS
+  real curve (FRED `DFII5`–`DFII30`, Nelson–Siegel on par yields), zero-coupon
+  breakevens, the 5y5y forward breakeven and par breakevens, compared with
+  FRED's `T5YIE`, `T10YIE`, `T5YIFR` and with the Fed's TIPS curve
+  (`data.load_gsw_tips_parameters`, Gürkaynak, Sack & Wright 2010). Dashboard
+  section, report section, `breakevens.csv`, `tips_nss_parameters.csv`, two
+  badges, `--no-inflation`.
+* **Known-truth test for breakevens** (`synthetic.simulate_tips_market`,
+  `benchmarks/breakeven_known_truth.py`). Over 4 simulated markets the
+  engine's 5Y / 10Y / 5y5y breakevens miss the truth by 3.1 / 3.6 / 7.8 bp
+  with 3 bp quote noise, against 5.4 / 5.3 / 10.2 bp for FRED's formulas on the
+  same quotes; without noise 0.5 / 0.3 / 0.6 bp against 3.2 / 3.1 / 3.5 bp.
+* **Real-time recession probabilities up to today**
+  (`regime.real_time_probabilities`), in the dashboard and `macro_signals.csv`.
+* **Charts for the README** (`nss_engine.figures`, `nss-engine run --figures`,
+  `pip install "nss-engine[figures]"`): the curve since 1990, the real-time
+  term premium (plain vs survey-anchored vs Kim–Wright) and recession
+  probabilities, in light and dark versions, drawn from FRED data by the live
+  workflow.
+* **Project website** (`website/build.py`): landing page with the latest
+  reading, the dashboard, and the results, methodology, research note and
+  changelog as HTML, published to GitHub Pages from `main`.
+* Real-data studies: the recession split test with plain and survey-anchored
+  real-time premia (also with NBER dates known only 12 months late), and a
+  breakeven study against FRED and the Fed's TIPS curve.
+* `docs/results.md` collects the detailed results; the README is shorter.
+* MIT license metadata in the package.
+
+### Fixed
+* The live workflow's runs on different branches no longer cancel each other.
+
 ## 2.3.0 — survey-anchored term premium, significance tests, PyPI
 
 ### Added
@@ -24,6 +72,32 @@
   forecast error (`DNSForecastEvaluation.errors`).
 * **PyPI release workflow** (trusted publishing on a `v*` tag, with a build
   check on every packaging change) and [docs/releasing.md](docs/releasing.md).
+
+### Results on FRED data (1990–2026)
+* Survey-anchored 10-year premium: mean 0.76%, correlation 0.95 with
+  Kim–Wright (12-month changes 0.82), RMSE 28 bp, mean gap −7 bp. Plain ACM:
+  mean 1.83%, correlation 0.96 (changes 0.75), RMSE 123 bp, gap +101 bp.
+  Bias correction lowers the RMSE only to 113 bp (analytic) or 117 bp
+  (bootstrap) and worsens the 12-month changes (0.46, 0.37).
+* Against a model-free survey premium (10Y zero yield minus the SPF 10-year
+  bill forecast, 35 first quarters): correlation 0.89 survey-anchored, 0.83
+  Kim–Wright, 0.80 plain ACM.
+* In real time (first estimate after 5 / 10 / 15 years) the survey-anchored
+  premium correlates 0.94 / 0.91 / 0.92 with its own full-sample series and
+  0.94 / 0.91 / 0.85 with Kim–Wright (plain ACM: 0.43 / 0.58 / 0.70 and
+  0.24 / 0.38 / 0.49); RMSE vs Kim–Wright 45–50 bp against 101–112 bp.
+  Real-time bias correction is a negative result: agreement with Kim–Wright
+  falls to 0.00–0.45 and the stationarity cap binds in 63–92% of months.
+* Known truth (8 simulated markets, level persistence 0.99): real-time RMSE
+  82 bp plain, 81 / 84 bp bias-corrected, 13 bp with surveys, 53 bp with
+  surveys biased by +0.5 pp.
+* Diebold–Mariano: AFNS beats the state-space VAR at 1 month (p = 0.014), not
+  at 6 or 12; both lose to the random walk at 1 month (p < 0.001); the
+  ½ model + ½ random walk combinations tie the random walk at 6 and 12 months
+  (p ≥ 0.49).
+* Coverage of 80% intervals: AFNS (93 / 89 / 86%) is significantly too wide
+  at every horizon; the state-space VAR (86 / 79 / 73%) only at 1 month. 2.2's
+  "AFNS has far better calibrated intervals" was wrong and is withdrawn.
 
 ### Fixed
 * `simulate_affine_market(level_persistence=0.99)` would have made the level
