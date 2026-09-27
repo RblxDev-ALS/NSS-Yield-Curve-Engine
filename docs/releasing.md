@@ -7,12 +7,8 @@ this workflow in this repository, so no API token is created or stored.
 
 ## One-time setup (repository owner)
 
-1. **Add a license.** Without a `LICENSE` file the code is "all rights
-   reserved" and users cannot legally reuse it, whatever PyPI shows. Add one
-   (for example MIT: *Add file → Create new file → `LICENSE` → Choose a license
-   template*), then add `license = "MIT"` and `license-files = ["LICENSE"]` to
-   `[project]` in `pyproject.toml` (use the SPDX identifier of the license you
-   chose).
+1. **License.** Done: `LICENSE` (MIT) is in the repository and
+   `pyproject.toml` declares `license = "MIT"` and `license-files`.
 2. **Create a PyPI account** at <https://pypi.org/account/register/> and enable
    two-factor authentication (PyPI requires it to publish).
 3. **Register the trusted publisher.** The name `nss-engine` is not taken yet,
@@ -47,8 +43,8 @@ with `repository-url: https://test.pypi.org/legacy/`.
 
    ```bash
    git checkout main && git pull
-   git tag -a v2.3.0 -m "nss-engine 2.3.0"
-   git push origin v2.3.0
+   git tag -a v2.4.0 -m "nss-engine 2.4.0"
+   git push origin v2.4.0
    ```
 
 The workflow then
@@ -61,7 +57,7 @@ The workflow then
   CHANGELOG section as the notes.
 
 A version number can be uploaded to PyPI only once. If something is wrong
-after publishing, fix it and release a new patch version (`2.3.1`).
+after publishing, fix it and release a new patch version (`2.4.1`).
 
 Every push or pull request that touches `pyproject.toml`, `README.md` or the
 workflow runs the build-and-check job without publishing, so packaging
