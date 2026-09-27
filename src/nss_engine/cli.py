@@ -7,6 +7,7 @@ import sys
 import time
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -82,12 +83,23 @@ def cmd_run(args: argparse.Namespace) -> int:
         reference_curve=not args.no_reference,
         term_premium=not args.no_term_premium,
         term_premium_surveys=not args.no_surveys,
+        term_premium_real_time_surveys=not args.fast,
+        inflation=not args.no_inflation,
     )
     t0 = time.perf_counter()
     result = run_pipeline(
         cfg, progress=lambda m: print(f"[{time.perf_counter() - t0:6.1f}s] {m}", file=sys.stderr)
     )
     paths = write_outputs(result, args.out, dashboard=not args.no_dashboard, offline=args.offline)
+    if args.figures:
+        try:
+            from .figures import make_figures
+        except ImportError:  # pragma: no cover - matplotlib missing
+            print('--figures needs matplotlib: pip install "nss-engine[figures]"', file=sys.stderr)
+            return 1
+        paths.update(
+            {f"figure_{k}": v for k, v in make_figures(result, Path(args.out) / "img").items()}
+        )
     s = result.summary
     print(
         f"\nAs of {s['as_of']}: regime {s['regime']['current']} "
@@ -100,11 +112,18 @@ def cmd_run(args: argparse.Namespace) -> int:
         tp = s["term_premium"]["latest"]
         print(
             f"10Y zero yield {tp['fitted']:.2f}% = expected short rate "
-            f"{tp['expected_short_rate']:.2f}% + term premium {tp['term_premium']:+.2f}%"
+            f"{tp['expected_short_rate']:.2f}% + term premium {tp['term_premium']:+.2f}% "
+            f"({s['term_premium']['method']})"
+        )
+    if "inflation" in s:
+        be = s["inflation"]["latest"]
+        print(
+            f"Breakeven inflation: 5Y {be['be_5y']:.2f}%, 10Y {be['be_10y']:.2f}%, "
+            f"5y5y forward {be['be_5y5y']:.2f}%"
         )
     print("\nOutputs:")
     for name, path in paths.items():
-        print(f"  {name:<13} {path}")
+        print(f"  {name:<18} {path}")
     if args.print_report:
         print("\n" + paths["report"].read_text(encoding="utf-8"))
     return 0
@@ -178,6 +197,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-surveys",
         action="store_true",
         help="do not anchor the term premium to SPF survey forecasts (FRED source)",
+    )
+    p_run.add_argument(
+        "--no-inflation",
+        action="store_true",
+        help="skip the TIPS real curve and breakeven inflation",
+    )
+    p_run.add_argument(
+        "--fast",
+        action="store_true",
+        help="skip the month-by-month re-estimation of the survey-anchored term premium "
+        "(saves about three minutes on FRED data)",
+    )
+    p_run.add_argument(
+        "--figures",
+        action="store_true",
+        help="also draw the README charts as PNG in <out>/img (needs matplotlib)",
     )
     p_run.add_argument(
         "--no-reference",

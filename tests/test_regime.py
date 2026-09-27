@@ -167,6 +167,17 @@ class TestRealTimeRecessionModel:
         alt = regime.real_time_evaluation(spread, scrambled, horizon=12, min_train_months=60)
         assert alt.probabilities[origin] == pytest.approx(base.probabilities[origin])
 
+    def test_real_time_probabilities_run_to_the_latest_month(self, data):
+        spread, rec = data
+        ev = regime.real_time_evaluation(spread, rec, horizon=12, min_train_months=60)
+        probs = regime.real_time_probabilities(spread, rec, horizon=12, min_train_months=60)
+        # same forecasts where the outcome is known, plus the unresolved last months
+        pd.testing.assert_series_equal(probs.loc[ev.probabilities.index], ev.probabilities)
+        assert probs.index[-1] == spread.resample("ME").mean().index[-1]
+        assert probs.index[-1] > ev.probabilities.index[-1]
+        with pytest.raises(ValueError):
+            regime.real_time_probabilities(spread, rec, min_train_months=10_000)
+
     def test_publication_lag_uses_less_data(self, data):
         spread, rec = data
         fast = regime.real_time_evaluation(spread, rec, min_train_months=60)

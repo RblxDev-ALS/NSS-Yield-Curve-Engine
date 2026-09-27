@@ -258,6 +258,8 @@ def render_markdown(r: PipelineResult) -> str:
 
     if r.acm is not None:
         _term_premium_section(r, add)
+    if r.breakevens is not None:
+        _inflation_section(r, add)
 
     add("## Factor validation")
     add("")
@@ -354,29 +356,59 @@ def _term_premium_section(r: PipelineResult, emit: Callable[[str], None]) -> Non
     assert r.acm is not None
     tp = r.summary["term_premium"]
     latest = tp["latest"]
+    surveyed = r.acm_survey is not None
     emit("## Term premium (Adrian-Crump-Moench)")
     emit("")
     emit(
         "A 10-year yield is the average short rate investors expect over ten years plus a "
-        "**term premium**, the extra return demanded for holding a long bond. The ACM model "
-        "(five principal components of the NSS zero curves, 1-120 months) separates the two "
-        "using only regressions."
+        "**term premium**, the extra return demanded for holding a long bond. The model is "
+        "Adrian, Crump & Moench (2013): five principal components of the NSS zero curves "
+        "(1-120 months), estimated by regressions."
+        + (
+            " Its expected short rates are also fitted to the Survey of Professional "
+            f"Forecasters' bill-rate forecasts ({tp['survey_anchored']['n_surveys']} forecasts), "
+            "which keeps them from reverting to the sample average of rates too fast. That "
+            "survey-anchored estimate is the headline; plain ACM is shown for comparison."
+            if surveyed
+            else ""
+        )
     )
     emit("")
     emit(
         f"**Latest 10Y zero yield {latest['fitted']:.2f}% = expected short rate "
-        f"{latest['expected_short_rate']:.2f}% + term premium {latest['term_premium']:+.2f}%.** "
-        f"Sample range of the premium: {tp['min']:+.2f}% ({tp['min_date']}) to "
-        f"{tp['max']:+.2f}% ({tp['max_date']}); model fitting error {tp['fit_rmse_bp_mean']:.1f} bp."
+        f"{latest['expected_short_rate']:.2f}% + term premium {latest['term_premium']:+.2f}%** "
+        f"({tp['method']}). Sample range of the premium: {tp['min']:+.2f}% ({tp['min_date']}) "
+        f"to {tp['max']:+.2f}% ({tp['max_date']}); model fitting error "
+        f"{tp['fit_rmse_bp_mean']:.1f} bp."
     )
     emit("")
-    sv = tp.get("survey_anchored")
-    if sv is not None:
+    rows = {}
+    if surveyed:
+        sv = tp["survey_anchored"]
+        rows["survey-anchored ACM (headline)"] = {
+            "expected short rate (%)": sv["latest"]["expected_short_rate"],
+            "term premium (%)": sv["latest"]["term_premium"],
+            "real-time term premium (%)": (sv["latest_real_time"] or {}).get(
+                "term_premium", np.nan
+            ),
+            "sample mean premium (%)": sv["mean"],
+        }
+    pl = tp["plain_acm"]
+    rows["plain ACM"] = {
+        "expected short rate (%)": pl["latest"]["expected_short_rate"],
+        "term premium (%)": pl["latest"]["term_premium"],
+        "real-time term premium (%)": (pl["latest_real_time"] or {}).get("term_premium", np.nan),
+        "sample mean premium (%)": pl["mean"],
+    }
+    table = pd.DataFrame(rows).T
+    table.index.name = "10-year decomposition, latest"
+    emit(_table(table, ".2f"))
+    emit("")
+    if surveyed:
         emit(
-            "**Anchored to surveys** (the same model, with expected short rates also fitted to "
-            f"{sv['n_surveys']} Survey of Professional Forecasters bill-rate forecasts): expected "
-            f"short rate {sv['latest']['expected_short_rate']:.2f}% + term premium "
-            f"{sv['latest']['term_premium']:+.2f}%."
+            "**Anchored to surveys**: plain ACM estimates where rates revert to from the "
+            "1990-2026 sample average, which fell for thirty years; the surveys tell it what "
+            "forecasters actually expected at each date."
         )
         emit("")
     if r.term_premium_comparison is not None:
@@ -393,11 +425,58 @@ def _term_premium_section(r: PipelineResult, emit: Callable[[str], None]) -> Non
         emit("")
         emit(
             "The spread is split into its expectations component (spread minus the 10-year "
-            "term premium) and the term premium itself, both estimated in real time. "
+            f"term premium) and the term premium itself, both from the {tp['method']} "
+            "re-estimated every month on past data only (Rosenberg & Maurer, 2008). "
             f"Pseudo-real-time probits, {int(rc['n_forecasts'].iloc[0])} common forecast months."
         )
         emit("")
         cols = ["auc_in_sample", "auc_out_of_sample", "brier_out_of_sample"]
         cols += ["log_score_out_of_sample", "latest_probability"]
         emit(_table(rc[cols], ".3f"))
+        emit("")
+        if "auc_gain_vs_first" in rc.columns:
+            for name, row in rc.iloc[1:].iterrows():
+                lo, hi = row["auc_gain_lo90"], row["auc_gain_hi90"]
+                if np.isfinite(lo):
+                    emit(
+                        f"* {name} vs {rc.index[0]}: out-of-sample AUC "
+                        f"{row['auc_gain_vs_first']:+.3f}, 90% block-bootstrap interval "
+                        f"[{lo:+.3f}, {hi:+.3f}]."
+                    )
+            emit("")
+
+
+def _inflation_section(r: PipelineResult, emit: Callable[[str], None]) -> None:
+    """Real yields and breakeven inflation."""
+    inf = r.summary["inflation"]
+    last = inf["latest"]
+    emit("## Real yields and breakeven inflation")
+    emit("")
+    emit(
+        "The TIPS real curve is fitted the same way as the nominal one (Nelson-Siegel on "
+        "4-5 par yields, 5 to 30 years). Breakeven inflation is the nominal minus the real "
+        "zero-coupon yield; the 5y5y forward breakeven is the average breakeven from 5 to 10 "
+        "years ahead, the Fed's favourite gauge of long-run inflation expectations. "
+        "Breakevens include an inflation risk premium and a TIPS liquidity discount, so they "
+        "are inflation *compensation*, not a pure forecast."
+    )
+    emit("")
+    emit(
+        f"**Latest ({inf['as_of']}): 10-year real yield {last['real_10y']:.2f}%, breakevens "
+        f"5Y {last['be_5y']:.2f}%, 10Y {last['be_10y']:.2f}%, 5y5y forward "
+        f"{last['be_5y5y']:.2f}%.** Real-curve fit error {inf['real_fit_rmse_bp_median']:.1f} bp "
+        f"(median). 5y5y range since {inf['sample_start']}: {inf['be_5y5y_min']:.2f}% "
+        f"({inf['be_5y5y_min_date']}) to {inf['be_5y5y_max']:.2f}% ({inf['be_5y5y_max_date']})."
+    )
+    emit("")
+    if r.breakeven_comparison is not None:
+        cmp = r.breakeven_comparison.copy()
+        cmp.index = [f"{e} vs {b}" for e, b in cmp.index]
+        cmp.index.name = "breakeven"
+        emit(
+            "Agreement with other measures (month-end values; `be_par` is the model's nominal "
+            "minus real *par* yield, the quantity FRED's T5YIE/T10YIE measure):"
+        )
+        emit("")
+        emit(_table(cmp, ".2f"))
         emit("")
