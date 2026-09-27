@@ -296,6 +296,8 @@ def anchored_term_premium_study(nss: pd.DataFrame, kw: pd.Series) -> None:
     rt_rows = {}
     for min_train in (60, 120, 180):
         for name, kwargs in methods.items():
+            if kwargs.get("bias_correction") == "bootstrap":
+                continue  # ~5x slower than the analytic correction, and no better on known truth
             rt = real_time_decomposition(nss, 10.0, min_train=min_train, **kwargs)
             tp = rt["term_premium"].dropna()
             vs_kw = compare_term_premia(tp, kw)
