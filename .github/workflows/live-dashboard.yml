@@ -23,13 +23,13 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .
+      - run: pip install -e ".[surveys]"
       - name: Run pipeline on FRED data
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -40,7 +40,7 @@ jobs:
         run: |
           cat site/report.md >> "$GITHUB_STEP_SUMMARY"
           cat site/report.md
-      - name: Real-data studies (cross-validation, forecasts, Fed curve, state-space)
+      - name: Real-data studies (cross-validation, forecasts, Fed curve, term premium, state-space)
         run: |
           pip install tabulate
           python benchmarks/real_data_studies.py --source fred | tee site/studies.md

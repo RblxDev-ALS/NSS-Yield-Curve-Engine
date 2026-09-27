@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -45,11 +46,12 @@ from nss_engine.data import (
     DataError,
     load_gsw_parameters,
     load_kim_wright_term_premium,
+    load_spf_bill_forecasts,
     load_treasury_yields,
     maturity_label,
 )
-from nss_engine.forecasting import evaluate_forecasts
-from nss_engine.statespace import evaluate_dns_forecasts
+from nss_engine.forecasting import compare_forecasts, evaluate_forecasts, hac_mean_test
+from nss_engine.statespace import DNSForecastEvaluation, evaluate_dns_forecasts
 from nss_engine.synthetic import simulate_market
 from nss_engine.termpremium import (
     compare_term_premia,
@@ -208,35 +210,125 @@ def term_premium_study(monthly: pd.DataFrame, reference: pd.DataFrame | None) ->
             }
     table = pd.DataFrame(rows).T.drop(columns="n_months")
     table.index.names = ["curve", "factors"]
-    rt_rows = {}
-    nss = curves["NSS curves (this engine)"]
-    full = fit_acm(nss).decomposition(10)["term_premium"]
-    for min_train in (60, 120, 180):
-        rt = real_time_decomposition(nss, 10.0, min_train=min_train)
-        tp = rt["term_premium"].dropna()
-        vs_kw = compare_term_premia(tp, kw)
-        rt_rows[f"start after {min_train} months"] = {
-            "first estimate": f"{tp.index[0]:%Y-%m}",
-            "corr with full sample": float(tp.corr(full.reindex(tp.index))),
-            "corr with Kim-Wright": vs_kw["corr_level"],
-            "RMSE vs Kim-Wright (bp)": vs_kw["rmse_bp"],
-            "sd (%)": float(tp.std()),
-            "share VAR capped": float(rt["var_capped"].mean()),
-            "discarded": int(rt["term_premium"].isna().sum()),
-        }
     print("\n## Term premium (ACM, 10-year) vs Kim-Wright\n")
     print(
         "Correlation of monthly levels and 12-month changes, RMSE and mean gap "
         "(ACM − Kim-Wright, bp). ACM's own choice is 5 factors on the Fed's curve.\n"
     )
     print(table.round(3).to_markdown())
-    print("\nPseudo-real-time 10-year premium (5 factors, NSS curves, re-estimated monthly):\n")
-    print(pd.DataFrame(rt_rows).T.to_markdown(floatfmt=".3f"))
+    anchored_term_premium_study(curves["NSS curves (this engine)"], kw)
+
+
+def anchored_term_premium_study(nss: pd.DataFrame, kw: pd.Series) -> None:
+    """Real-world dynamics from OLS, bias-corrected OLS or survey anchors, full and real time."""
+    t0 = time.perf_counter()
+    try:
+        spf = load_spf_bill_forecasts()
+    except (DataError, ImportError) as exc:
+        print(f"\n(SPF survey forecasts unavailable: {exc})\n")
+        spf = None
+    if spf is not None:
+        first = spf.groupby("series")["date"].min().dt.strftime("%Y-%m")
+        print(
+            f"\nSPF 3-month bill forecasts: {len(spf)} forecasts, "
+            f"{spf['date'].min():%Y-%m} to {spf['date'].max():%Y-%m}; first per series: "
+            + ", ".join(f"{k} {v}" for k, v in first.items())
+        )
+    methods: dict[str, dict[str, Any]] = {
+        "OLS (ACM)": {},
+        "bias-corrected, analytic": {"bias_correction": "analytic"},
+        "bias-corrected, bootstrap (BRW)": {"bias_correction": "bootstrap"},
+    }
+    if spf is not None:
+        methods["survey-anchored (SPF)"] = {"surveys": spf}
+    full, rows = {}, {}
+    for name, kwargs in methods.items():
+        res = fit_acm(nss, **kwargs)
+        tp = res.decomposition(10)["term_premium"]
+        full[name] = tp
+        stats = compare_term_premia(tp, kw)
+        rows[name] = {
+            "mean TP (%)": float(tp.mean()),
+            "sd TP (%)": float(tp.std()),
+            "latest TP (%)": float(tp.iloc[-1]),
+            "max root": res.max_eigenvalue,
+            "corr KW": stats["corr_level"],
+            "corr KW 12m chg": stats["corr_change_12m"],
+            "RMSE KW (bp)": stats["rmse_bp"],
+            "mean gap KW (bp)": stats["mean_gap_bp"],
+        }
+        if res.survey_fit is not None:
+            print(f"\nSurvey fit, {name} (RMSE by series, pp):")
+            print(res.survey_rmse.round(3).to_markdown())
+    print("\n## Term premium: real-world dynamics (full sample, 10-year, NSS curves)\n")
+    print(pd.DataFrame(rows).T.round(3).to_markdown())
+
+    if spf is not None:
+        # model-free: 10-year zero yield minus the survey's 10-year average bill rate
+        bill10 = spf[spf["series"] == "BILL10"].set_index("date")["value"]
+        y10 = nss[_ten_year(nss)]
+        months = y10.index.to_period("M")
+        y10m = pd.Series(y10.to_numpy(), index=months)
+        b10 = pd.Series(bill10.to_numpy(), index=bill10.index.to_period("M"))
+        common = b10.index.intersection(y10m.index)
+        if len(common) >= 10:
+            survey_tp = (y10m[common] - b10[common]).rename("survey TP")
+            kw_m = kw.groupby(kw.index.to_period("M")).mean()
+            comp = {"Kim-Wright": kw_m}
+            comp.update({k: pd.Series(v.to_numpy(), index=v.index.to_period("M")) for k, v in full.items()})
+            srow = {}
+            for k, v in comp.items():
+                both = pd.concat([survey_tp, v.rename("x")], axis=1).dropna()
+                srow[k] = {
+                    "corr": float(both.iloc[:, 0].corr(both["x"])),
+                    "mean gap (bp)": float((both["x"] - both.iloc[:, 0]).mean() * 100),
+                    "n": len(both),
+                }
+            print(
+                "\nModel-free survey premium (10Y zero yield − SPF BILL10, each first quarter, "
+                f"{common.min()} to {common.max()}, mean {survey_tp.mean():.2f}%): agreement of "
+                "each estimate with it (gap = estimate − survey premium)\n"
+            )
+            print(pd.DataFrame(srow).T.round(3).to_markdown())
+
+    rt_rows = {}
+    for min_train in (60, 120, 180):
+        for name, kwargs in methods.items():
+            rt = real_time_decomposition(nss, 10.0, min_train=min_train, **kwargs)
+            tp = rt["term_premium"].dropna()
+            vs_kw = compare_term_premia(tp, kw)
+            own = full[name].reindex(tp.index)
+            ols = full["OLS (ACM)"].reindex(tp.index)
+            rt_rows[(f"after {min_train} months ({tp.index[0]:%Y-%m})", name)] = {
+                "corr own full sample": float(tp.corr(own)),
+                "RMSE own full sample (bp)": float(np.sqrt(((tp - own) ** 2).mean()) * 100),
+                "corr OLS full sample": float(tp.corr(ols)),
+                "corr KW": vs_kw["corr_level"],
+                "corr KW 12m chg": vs_kw["corr_change_12m"],
+                "RMSE KW (bp)": vs_kw["rmse_bp"],
+                "sd (%)": float(tp.std()),
+                "share capped": float(rt["var_capped"].mean()),
+                "discarded": int(rt["term_premium"].isna().sum()),
+            }
+    print("\n## Real-time 10-year term premium, re-estimated monthly on past data\n")
+    print(
+        "Each estimate uses only yields (and surveys) published by then. 'own full sample' "
+        "is the same method estimated on all data.\n"
+    )
+    table = pd.DataFrame(rt_rows).T
+    table.index.names = ["first estimate", "real-world dynamics"]
+    print(table.to_markdown(floatfmt=".3f"))
+    print(f"\n({time.perf_counter() - t0:.0f} s)")
+
+
+def _ten_year(zeros: pd.DataFrame) -> float:
+    cols = np.asarray(zeros.columns, dtype=float)
+    return float(cols[np.argmin(np.abs(cols - 10.0))])
 
 
 def dns_study(core: pd.DataFrame, two_step: pd.DataFrame) -> None:
     t0 = time.perf_counter()
-    rows, cover = {}, {}
+    rows, cover, evs = {}, {}, {}
     specs: dict[str, dict[str, bool]] = {
         "VAR(1)": {},
         "VAR(1), random-walk level": {"level_unit_root": True},
@@ -248,6 +340,7 @@ def dns_study(core: pd.DataFrame, two_step: pd.DataFrame) -> None:
         ev = evaluate_dns_forecasts(
             core, horizons=(1, 6, 12), min_train=120, reestimate_every=12, **kwargs
         )
+        evs[label] = ev
         rel = ev.relative_rmse
         rows[f"state-space {label}"] = {f"h={h}m": rel.loc[h].mean() for h in rel.index}
         comb = ev.relative_rmse_combination
@@ -269,7 +362,56 @@ def dns_study(core: pd.DataFrame, two_step: pd.DataFrame) -> None:
     cov = pd.DataFrame(cover).T
     cov.index.name = "model"
     print(cov.round(3).to_markdown())
+    significance_study(evs)
     print(f"\n({time.perf_counter() - t0:.0f} s)")
+
+
+def significance_study(evs: dict[str, DNSForecastEvaluation]) -> None:
+    """Diebold-Mariano tests between forecasts, and HAC tests of interval coverage."""
+    pairs = {
+        "AFNS vs state-space, VAR(1)": (("AFNS, VAR(1)", "model"), ("VAR(1)", "model")),
+        "state-space VAR(1) vs random walk": (("VAR(1)", "model"), ("VAR(1)", "random_walk")),
+        "AFNS VAR(1) vs random walk": (("AFNS, VAR(1)", "model"), ("VAR(1)", "random_walk")),
+        "½ state-space VAR(1) + ½ RW vs RW": (
+            ("VAR(1)", "combination"),
+            ("VAR(1)", "random_walk"),
+        ),
+        "½ AFNS VAR(1) + ½ RW vs RW": (
+            ("AFNS, VAR(1)", "combination"),
+            ("VAR(1)", "random_walk"),
+        ),
+    }
+    horizons = list(evs["VAR(1)"].rmse_model.index)
+    rows = {}
+    for name, ((a, fa), (b, fb)) in pairs.items():
+        for h in horizons:
+            res = compare_forecasts(evs[a].errors(h, fa), evs[b].errors(h, fb), h)
+            rows[(name, f"{h}m")] = res
+    table = pd.DataFrame(rows).T
+    table.index.names = ["A vs B", "horizon"]
+    print("\n## Are the differences significant? Diebold-Mariano tests\n")
+    print(
+        "Loss = squared error averaged over tenors at each origin; RMSE in bp; "
+        "DM statistic with the Harvey-Leybourne-Newbold correction "
+        "(negative = A more accurate), two-sided p-value.\n"
+    )
+    print(table.drop(columns="n").round(3).to_markdown())
+    print(f"\n({int(table['n'].min())}-{int(table['n'].max())} forecast origins per test)")
+
+    cov_rows = {}
+    for h in horizons:
+        per_origin = {k: evs[k].inside[h].mean(axis=1) for k in ("VAR(1)", "AFNS, VAR(1)")}
+        for k, x in per_origin.items():
+            t = hac_mean_test(x.to_numpy(), value=evs[k].interval, lags=max(h - 1, 6))
+            cov_rows[(f"state-space {k}", f"{h}m")] = t
+        diff = (per_origin["AFNS, VAR(1)"] - per_origin["VAR(1)"]).dropna()
+        cov_rows[("AFNS − state-space", f"{h}m")] = hac_mean_test(
+            diff.to_numpy(), 0.0, lags=max(h - 1, 6)
+        )
+    print("\nCoverage of 80% intervals: mean, Newey-West s.e., test against 80% (or 0 for the gap)\n")
+    ct = pd.DataFrame(cov_rows).T
+    ct.index.names = ["model", "horizon"]
+    print(ct.round(3).to_markdown())
 
 
 def gsw_study(monthly: pd.DataFrame, reference: pd.DataFrame, source: str) -> None:
