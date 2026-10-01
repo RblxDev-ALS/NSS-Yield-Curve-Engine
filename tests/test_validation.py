@@ -92,6 +92,13 @@ class TestCompareToReference:
         assert cmp.overall()["demeaned_rmse_bp"] < 1e-9
         np.testing.assert_allclose(s["change_corr"], 1.0)
 
+    def test_subset(self, small_market):
+        truth = small_market.true_params.iloc[:30]
+        cmp = compare_to_reference(truth, truth)
+        sub = cmp.subset(truth.index[5:12].append(pd.Index([pd.Timestamp("1800-01-01")])))
+        assert sub.n_dates == 7
+        assert list(sub.engine.columns) == list(cmp.engine.columns)
+
     def test_no_common_dates(self, small_market):
         p = small_market.true_params
         with pytest.raises(ValueError):

@@ -25,6 +25,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from numpy.typing import ArrayLike, NDArray
 
 #: FRED daily Treasury constant-maturity series -> maturity in years.
 TREASURY_SERIES: dict[str, float] = {
@@ -39,6 +40,26 @@ TREASURY_SERIES: dict[str, float] = {
     "DGS10": 10.0,
     "DGS20": 20.0,
     "DGS30": 30.0,
+}
+
+#: FRED daily TIPS constant-maturity (real) yields -> maturity in years. The
+#: 5-, 7-, 10- and 20-year series start in January 2003; the 30-year in
+#: February 2010.
+TIPS_SERIES: dict[str, float] = {
+    "DFII5": 5.0,
+    "DFII7": 7.0,
+    "DFII10": 10.0,
+    "DFII20": 20.0,
+    "DFII30": 30.0,
+}
+
+#: FRED's own breakeven inflation rates (percent, daily): the 5- and 10-year
+#: nominal minus TIPS constant-maturity yields, and the 5-year, 5-year forward
+#: rate computed from them.
+BREAKEVEN_SERIES: dict[str, str] = {
+    "T5YIE": "5Y breakeven",
+    "T10YIE": "10Y breakeven",
+    "T5YIFR": "5y5y forward breakeven",
 }
 
 #: NBER recession indicator (monthly, 1 = recession), published on FRED.
@@ -123,13 +144,18 @@ def parse_fred_json(payload: str, series_id: str) -> pd.Series:
 
 def _http_get(url: str, timeout: float = 30.0, retries: int = 4) -> str:
     """GET with exponential back-off (1s, 2s, 4s, ...)."""
+    return _http_get_bytes(url, timeout=timeout, retries=retries).decode("utf-8")
+
+
+def _http_get_bytes(url: str, timeout: float = 30.0, retries: int = 4) -> bytes:
+    """Like :func:`_http_get`, returning the raw body (for binary files)."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     last_exc: Exception | None = None
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(request, timeout=timeout) as resp:
                 body: bytes = resp.read()
-                return body.decode("utf-8")
+                return body
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             last_exc = exc
             if (
@@ -194,7 +220,7 @@ def fetch_fred_series(
 
 
 def _read_cached(path: Path, series_id: str) -> pd.Series:
-    s = parse_fred_csv(path.read_text(), series_id)
+    s = parse_fred_csv(path.read_text(encoding="utf-8"), series_id)
     s.name = series_id
     return s
 
@@ -283,6 +309,39 @@ def load_treasury_yields(
     return panel
 
 
+def load_tips_yields(
+    start: str | pd.Timestamp | None = "2003-01-01",
+    end: str | pd.Timestamp | None = None,
+    freq: str | None = "W-FRI",
+    how: str = "last",
+    min_tenors: int = 4,
+    **fetch_kwargs: object,
+) -> pd.DataFrame:
+    """TIPS constant-maturity real yield panel from FRED (``DFII5`` … ``DFII30``).
+
+    Same layout as :func:`load_treasury_yields`: columns are maturities in
+    years, values in percent. Like the nominal CMT yields these are
+    semi-annual par yields, of inflation-indexed notes and bonds.
+    """
+    raw = fetch_fred(TIPS_SERIES, start=start, end=end, **fetch_kwargs)
+    known = {c: TIPS_SERIES[c] for c in raw.columns if c in TIPS_SERIES}
+    panel = raw[list(known)].rename(columns=known).sort_index(axis=1)
+    panel = resample_yields(panel, freq, how)
+    panel = panel[panel.notna().sum(axis=1) >= min_tenors]
+    panel.index.name = "date"
+    return panel
+
+
+def load_breakevens(
+    start: str | pd.Timestamp | None = "2003-01-01",
+    end: str | pd.Timestamp | None = None,
+    **fetch_kwargs: object,
+) -> pd.DataFrame:
+    """FRED's breakeven inflation rates (``T5YIE``, ``T10YIE``, ``T5YIFR``), daily, percent."""
+    raw = fetch_fred(BREAKEVEN_SERIES, start=start, end=end, **fetch_kwargs)
+    return raw.dropna(how="all")
+
+
 def load_recession_indicator(
     start: str | pd.Timestamp | None = None,
     end: str | pd.Timestamp | None = None,
@@ -296,12 +355,187 @@ def load_recession_indicator(
     return s
 
 
+def load_kim_wright_term_premium(
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    maturity: int = 10,
+    **fetch_kwargs: object,
+) -> pd.Series:
+    """Kim & Wright (2005) term premium on a zero-coupon bond, percent (daily).
+
+    The Federal Reserve Board's estimate from a three-factor affine model fitted
+    to the Treasury curve and survey forecasts of short rates, published on FRED
+    as ``THREEFYTP1`` … ``THREEFYTP10`` (the number is the maturity in years).
+    It is an independent benchmark for :mod:`nss_engine.termpremium`.
+    """
+    if not 1 <= maturity <= 10:
+        raise ValueError("Kim-Wright term premia exist for maturities 1 to 10 years")
+    sid = f"THREEFYTP{maturity}"
+    s = fetch_fred_series(sid, **fetch_kwargs)  # type: ignore[arg-type]
+    s = s.loc[slice(start, end)].dropna()
+    s.name = f"kim_wright_tp{maturity}"
+    return s
+
+
+# =============================================================================
+# Survey of Professional Forecasters (Federal Reserve Bank of Philadelphia)
+# =============================================================================
+
+SPF_URL = (
+    "https://www.philadelphiafed.org/-/media/frbp/assets/surveys-and-data/"
+    "survey-of-professional-forecasters/data-files/files/{statistic}_{variable}_level.xlsx"
+)
+
+#: SPF forecasts of the 3-month T-bill rate used as survey anchors, with the
+#: months they average over, counted from the end of the survey's middle month
+#: (``start``, ``end``; see :func:`spf_bill_windows`). ``TBILL3``-``TBILL6``
+#: are quarterly averages 1-4 quarters ahead, ``TBILLB``-``TBILLD`` calendar-year
+#: averages 1-3 years ahead, ``BILL10`` the average over the next ten years.
+SPF_BILL_SERIES = ("TBILL3", "TBILL4", "TBILL5", "TBILL6", "TBILLB", "TBILLC", "TBILLD", "BILL10")
+
+
+def spf_bill_windows(series: str, quarter: int) -> tuple[int, int]:
+    """Months ``(start, end)`` after the survey date that an SPF bill forecast averages.
+
+    The survey date is the end of the middle month of the survey quarter (the
+    SPF is released in the middle of that month), so for a first-quarter survey
+    month 1 is March. Quarterly forecasts ``TBILLk`` cover quarter ``q + k − 2``;
+    annual ones (``TBILLB`` = next calendar year, ``C``, ``D``) the twelve
+    months of that year; ``BILL10`` the next 120 months.
+    """
+    if series == "BILL10":
+        return 1, 120
+    if series.startswith("TBILL") and series[5:].isdigit():
+        k = int(series[5:])
+        if k < 3:
+            raise ValueError(f"{series} is not a forecast of a future quarter")
+        start = 3 * (k - 3) + 2
+        return start, start + 2
+    years_ahead = {"TBILLB": 1, "TBILLC": 2, "TBILLD": 3}.get(series)
+    if years_ahead is None:
+        raise ValueError(f"unknown SPF bill series {series!r}")
+    start = 12 * years_ahead - 3 * quarter + 2
+    return start, start + 11
+
+
+def discount_to_continuous(rate: ArrayLike, days: int = 91) -> NDArray[np.float64]:
+    """T-bill discount rate (percent) to a continuously compounded yield (percent).
+
+    A bill quoted at discount ``d`` costs ``1 − d·days/360``; its continuously
+    compounded yield is ``−ln(price)·365/days``. At 5% the two differ by 10 bp.
+    """
+    d = np.asarray(rate, dtype=float) / 100.0
+    return -np.log1p(-d * days / 360.0) * 365.0 / days * 100.0
+
+
+def parse_spf_bill_forecasts(
+    wide: pd.DataFrame, series: Iterable[str] = SPF_BILL_SERIES
+) -> pd.DataFrame:
+    """Turn SPF level files (``YEAR``, ``QUARTER``, ``TBILL3`` …) into survey anchors.
+
+    Returns one row per forecast with columns ``date`` (end of the survey's
+    middle month), ``series``, ``start`` and ``end`` (the months it averages
+    over, see :func:`spf_bill_windows`), ``value`` (continuously compounded
+    percent) and ``quoted`` (the discount rate as published) - the format
+    :func:`nss_engine.termpremium.fit_acm` takes as ``surveys``.
+    """
+    df = wide.copy()
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    if not {"YEAR", "QUARTER"} <= set(df.columns):
+        raise DataError("SPF file lacks YEAR/QUARTER columns")
+    rows = []
+    for _, r in df.iterrows():
+        year, quarter = r["YEAR"], r["QUARTER"]
+        if pd.isna(year) or pd.isna(quarter):
+            continue
+        year, quarter = int(year), int(quarter)
+        date = pd.Timestamp(year=year, month=3 * quarter - 1, day=1) + pd.offsets.MonthEnd(0)
+        for name in series:
+            value = pd.to_numeric(r.get(name, np.nan), errors="coerce")
+            if pd.isna(value):
+                continue
+            start, end = spf_bill_windows(name, quarter)
+            rows.append((date, name, start, end, float(value)))
+    out = pd.DataFrame(rows, columns=["date", "series", "start", "end", "quoted"])
+    out["value"] = discount_to_continuous(out["quoted"].to_numpy())
+    out = out[["date", "series", "start", "end", "value", "quoted"]]
+    return out.sort_values(["date", "start"]).reset_index(drop=True)
+
+
+def load_spf_bill_forecasts(
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    *,
+    statistic: str = "median",
+    series: Iterable[str] = SPF_BILL_SERIES,
+    cache_dir: Path | str | None = None,
+    max_age_hours: float = 24.0 * 7,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """Survey of Professional Forecasters' 3-month T-bill rate forecasts.
+
+    The Philadelphia Fed publishes the median (or ``statistic='mean'``)
+    forecast each quarter since 1981 for the next four quarters and the next
+    few calendar years (``TBILL``), and since 1992, in first-quarter surveys, the
+    average over the next ten years (``BILL10``). These are the survey anchors
+    for :func:`nss_engine.termpremium.fit_acm`; see
+    :func:`parse_spf_bill_forecasts` for the format. Reading the Excel files
+    needs ``openpyxl`` (``pip install nss-engine[surveys]``).
+    """
+    if statistic not in ("median", "mean"):
+        raise ValueError("statistic must be 'median' or 'mean'")
+    cache = Path(cache_dir) if cache_dir is not None else default_cache_dir()
+    path = cache / f"spf_{statistic}_bills.csv"
+    fresh = path.exists() and (time.time() - path.stat().st_mtime) / 3600.0 <= max_age_hours
+    if fresh and not refresh:
+        wide = pd.read_csv(path)
+    else:
+        try:
+            frames = [
+                _read_spf_excel(_http_get_bytes(SPF_URL.format(statistic=statistic, variable=v)))
+                for v in ("tbill", "bill10")
+            ]
+            wide = frames[0].merge(frames[1], on=["YEAR", "QUARTER"], how="outer")
+        except DataError:
+            if not path.exists():
+                raise
+            import warnings
+
+            warnings.warn(
+                f"SPF download failed; using stale cache {path}", RuntimeWarning, stacklevel=2
+            )
+            wide = pd.read_csv(path)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            wide.to_csv(path, index=False)
+    out = parse_spf_bill_forecasts(wide, series)
+    lo = pd.Timestamp(start) if start is not None else out["date"].min()
+    hi = pd.Timestamp(end) if end is not None else out["date"].max()
+    return out[(out["date"] >= lo) & (out["date"] <= hi)].reset_index(drop=True)
+
+
+def _read_spf_excel(content: bytes) -> pd.DataFrame:
+    try:
+        df = pd.read_excel(io.BytesIO(content))
+    except ImportError as exc:
+        raise DataError("reading the SPF files needs openpyxl: pip install openpyxl") from exc
+    except Exception as exc:  # pragma: no cover - many possible parser errors
+        raise DataError(f"could not parse SPF file: {exc}") from exc
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    if not {"YEAR", "QUARTER"} <= set(df.columns):
+        raise DataError("SPF file lacks YEAR/QUARTER columns")
+    return df
+
+
 # =============================================================================
 # Federal Reserve (Gürkaynak-Sack-Wright) Svensson curve
 # =============================================================================
 
 #: The Fed's daily Svensson zero-curve parameters (Gürkaynak, Sack & Wright, 2007).
 GSW_URL = "https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv"
+
+#: The Fed's daily Svensson curve for TIPS real yields (Gürkaynak, Sack & Wright, 2010).
+GSW_TIPS_URL = "https://www.federalreserve.gov/data/yield-curve-tables/feds200805.csv"
 
 
 def parse_gsw_csv(text: str) -> pd.DataFrame:
@@ -369,6 +603,25 @@ def load_gsw_parameters(
     return parse_gsw_csv(text).loc[slice(start, end)]
 
 
+def load_gsw_tips_parameters(
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    *,
+    cache_dir: Path | str | None = None,
+    max_age_hours: float = 24.0,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """The Fed's Svensson curve for TIPS real zero yields (Gürkaynak, Sack & Wright, 2010).
+
+    Same file layout as :func:`load_gsw_parameters`. Subtracting it from the
+    nominal GSW curve gives the Fed's own zero-coupon breakeven inflation, an
+    independent benchmark for :mod:`nss_engine.inflation`. GSW consider it
+    reliable from about 2 (early years: 5) to 20 years.
+    """
+    text = _cached_text("feds200805", GSW_TIPS_URL, cache_dir, max_age_hours, refresh)
+    return parse_gsw_csv(text).loc[slice(start, end)]
+
+
 def _cached_text(
     key: str,
     url: str,
@@ -380,7 +633,7 @@ def _cached_text(
     path = cache / f"{key}.csv"
     fresh = path.exists() and (time.time() - path.stat().st_mtime) / 3600.0 <= max_age_hours
     if fresh and not refresh:
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
     try:
         text = _http_get(url, timeout=120.0)
     except DataError:
@@ -390,10 +643,10 @@ def _cached_text(
             warnings.warn(
                 f"download of {url} failed; using stale cache {path}", RuntimeWarning, stacklevel=3
             )
-            return path.read_text()
+            return path.read_text(encoding="utf-8")
         raise
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return text
 
 

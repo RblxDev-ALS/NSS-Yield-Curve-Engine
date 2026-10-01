@@ -45,6 +45,13 @@ def test_pipeline_result(result):
     assert {"10Y−3M spread", "near-term forward spread", "both"} <= set(preds)
     assert 0 <= preds["both"]["auc_out_of_sample"] <= 1
     assert "near_term_fwd" in result.spreads
+    # real-time recession probabilities run to the end of the sample
+    rt = result.recession_real_time
+    assert rt is not None and rt.index[-1] == result.fit.params.index[-1]
+    # synthetic TIPS: breakevens are checked against the known truth
+    cmp = result.breakeven_comparison
+    assert cmp.loc[("be_10y", "true be_10y"), "rmse_bp"] < 8
+    assert s["inflation"]["real_fit_rmse_bp_median"] < 5
     dns = s["state_space_dns"]
     assert 0.1 < dns["lambda"] < 3
     fc = pd.DataFrame(dns["forecast"]).T
@@ -59,6 +66,18 @@ def test_pipeline_result(result):
     }
     lo, hi = result.latest_fit.confidence_band([2, 10])
     assert np.all(hi - lo > 0)
+    tp = s["term_premium"]
+    latest = tp["latest"]
+    assert latest["fitted"] == pytest.approx(
+        latest["expected_short_rate"] + latest["term_premium"], abs=1e-4
+    )
+    assert tp["fit_rmse_bp_mean"] < 5
+    assert tp["real_time_months_discarded"] <= 3
+    assert result.term_premium_real_time is not None
+    assert result.term_premium_real_time.index[0] > result.acm.fitted.index[0]
+    assert {"10Y−3M spread", "expectations component", "term premium"} <= set(
+        s["term_premium_recession_predictors"]
+    )
     json.dumps(s)  # fully serialisable
 
 
@@ -70,12 +89,20 @@ def test_write_outputs(result, tmp_path):
     assert {"beta0", "lambda2", "rmse_bp"} <= set(params.columns)
     signals = pd.read_csv(paths["signals"], index_col=0)
     assert {"regime", "slope", "recession_prob_12m"} <= set(signals.columns)
-    report = paths["report"].read_text()
+    report = paths["report"].read_text(encoding="utf-8")
     assert "Synthetic data" in report and "Recession probability" in report
     assert "Validation against the true curve" in report and "zero_95ci_bp" in report
     assert "pseudo-real time" in report and "State-space dynamic Nelson-Siegel" in report
     assert paths["outliers"].exists() and paths["reference"].exists()
-    html = paths["dashboard"].read_text()
+    assert "Term premium (Adrian-Crump-Moench)" in report
+    badge = json.loads(paths["badge_regime"].read_text(encoding="utf-8"))
+    assert badge["schemaVersion"] == 1
+    assert badge["message"].split()[0] in {"Inverted", "Flat", "Normal", "Steep"}
+    assert {"badge_recession", "badge_term_premium", "badge_as_of", "badge_breakeven"} <= set(paths)
+    assert json.loads(paths["badge_recession"].read_text(encoding="utf-8"))["message"].endswith("%")
+    tp = pd.read_csv(paths["term_premium"], index_col=0)
+    assert {"expected_short_rate", "term_premium", "term_premium_real_time"} <= set(tp.columns)
+    html = paths["dashboard"].read_text(encoding="utf-8")
     assert html.count("plotly-graph-div") >= 8
     assert 'src="https://cdn.plot.ly' in html  # default: load plotly.js from the CDN
     # plotly.js must load before the first chart on the page
@@ -86,7 +113,7 @@ def test_write_outputs(result, tmp_path):
 
 def test_offline_dashboard_embeds_plotly(result, tmp_path):
     paths = write_outputs(result, tmp_path, offline=True)
-    html = paths["dashboard"].read_text()
+    html = paths["dashboard"].read_text(encoding="utf-8")
     assert 'src="https://cdn.plot.ly' not in html and len(html) > 3_000_000
 
 
@@ -121,6 +148,130 @@ def test_gsw_reference_for_fred_source(monkeypatch, small_market):
     assert r.reference is None and "reference_curve" not in r.summary
 
 
+def _offline(*args, **kwargs):
+    from nss_engine.data import DataError
+
+    raise DataError("offline")
+
+
+def test_term_premium_benchmarks_for_fred_source(monkeypatch, long_market, tmp_path):
+    from nss_engine import pipeline
+    from nss_engine.data import parse_spf_bill_forecasts
+    from nss_engine.report import render_markdown
+
+    monthly = long_market.yields.resample("ME").last()
+    truth = long_market.true_params
+    kw = pd.Series(np.linspace(2.0, 0.0, len(truth)), index=truth.index, name="kim_wright_tp10")
+    monkeypatch.setattr(pipeline, "load_gsw_parameters", lambda *a, **k: truth)
+    monkeypatch.setattr(pipeline, "load_kim_wright_term_premium", lambda *a, **k: kw)
+    # survey forecasts: next quarter's bill rate = today's 3M yield, ten-year = today's 10Y
+    q = monthly[monthly.index.month.isin([2, 5, 8, 11])]
+    wide = pd.DataFrame(
+        {
+            "YEAR": q.index.year,
+            "QUARTER": (q.index.month + 1) // 3,
+            "TBILL3": q[0.25].to_numpy(),
+            "BILL10": np.where(q.index.month == 2, q[10.0].to_numpy(), np.nan),
+        }
+    )
+    surveys = parse_spf_bill_forecasts(wide)
+    monkeypatch.setattr(pipeline, "load_spf_bill_forecasts", lambda *a, **k: surveys)
+    monkeypatch.setattr(pipeline, "load_tips_yields", _offline)
+    cfg = PipelineConfig(source="fred", freq="ME", run_forecasts=False, term_premium_min_train=330)
+    r = run_pipeline(cfg, data=(monthly, None, None))
+    assert set(r.term_premium_benchmarks) == {
+        "Kim-Wright (Fed Board)",
+        "ACM on the Fed's GSW curve",
+    }
+    cmp = r.term_premium_comparison
+    # (full sample, survey-anchored, real time, survey-anchored real time) x (two benchmarks)
+    assert len(cmp) == 8
+    assert r.acm_survey is not None and r.acm_survey.p_dynamics == "survey"
+    # the survey-anchored estimate is the headline
+    assert r.headline_acm is r.acm_survey and r.term_premium_method == "survey-anchored ACM"
+    assert r.headline_real_time is r.term_premium_real_time_survey
+    s_tp = r.summary["term_premium"]
+    assert s_tp["method"] == "survey-anchored ACM"
+    assert s_tp["latest"] == r.summary["term_premium"]["survey_anchored"]["latest"]
+    assert s_tp["plain_acm"]["latest"]["term_premium"] != pytest.approx(
+        s_tp["latest"]["term_premium"]
+    )
+    sv = s_tp["survey_anchored"]
+    assert sv["n_surveys"] == len(surveys)
+    assert sv["latest_real_time"] is not None
+    pd.testing.assert_frame_equal(r.acm_survey.fitted, r.acm.fitted)
+    report = render_markdown(r)
+    assert "Anchored to surveys" in report and "plain ACM" in report
+    paths = write_outputs(r, tmp_path, dashboard=False)
+    tp_csv = pd.read_csv(paths["term_premium"], index_col=0)
+    assert {"term_premium_survey", "expected_short_rate_survey"} <= set(tp_csv.columns)
+    assert "term_premium_survey_real_time" in tp_csv.columns
+    assert r.breakevens is None and "inflation" not in r.summary  # TIPS download failed
+    # without surveys (download failed, or switched off) plain ACM is the headline
+    monkeypatch.setattr(pipeline, "load_spf_bill_forecasts", _offline)
+    plain = run_pipeline(cfg, data=(monthly, None, None))
+    assert plain.acm_survey is None and plain.headline_acm is plain.acm
+    assert plain.summary["term_premium"]["method"] == "ACM"
+    # the engine's curves are close to the "Fed" curve here, so the premia agree
+    row = cmp.loc[("ACM on NSS curves (full sample)", "ACM on the Fed's GSW curve")]
+    assert row["corr_level"] > 0.9
+    assert r.term_premium_recession is None  # no recession data
+    assert "benchmarks" in r.summary["term_premium"]
+
+
+def test_breakevens_for_fred_source(monkeypatch, long_market, tmp_path):
+    from nss_engine import pipeline
+    from nss_engine.report import render_markdown
+    from nss_engine.synthetic import simulate_tips_market
+
+    monthly = long_market.yields.loc["2001-01-01":].resample("ME").last()
+    tips = simulate_tips_market(long_market)
+    tips_monthly = tips.yields.resample("ME").last()
+    truth = tips.true_breakevens()
+    fred = pd.DataFrame(
+        {"T5YIE": truth["be_5y"], "T10YIE": truth["be_10y"], "T5YIFR": truth["be_5y5y"]}
+    )
+    monkeypatch.setattr(pipeline, "load_tips_yields", lambda *a, **k: tips_monthly)
+    monkeypatch.setattr(pipeline, "load_breakevens", lambda *a, **k: fred)
+    monkeypatch.setattr(pipeline, "load_gsw_parameters", lambda *a, **k: long_market.true_params)
+    monkeypatch.setattr(pipeline, "load_gsw_tips_parameters", lambda *a, **k: tips.true_real_params)
+    cfg = PipelineConfig(
+        source="fred", start="2001-01-01", freq="ME", run_forecasts=False, term_premium=False
+    )
+    r = run_pipeline(cfg, data=(monthly, None, None))
+    assert r.real_fit is not None and r.breakevens is not None
+    assert r.breakevens.index[0] >= pd.Timestamp("2003-01-01")
+    cmp = r.breakeven_comparison
+    assert ("be_5y5y", "Fed GSW be_5y5y") in cmp.index
+    assert ("be_par_5y", "FRED T5YIE") in cmp.index
+    # the "Fed" curves here are the truth, so the engine agrees with them closely
+    assert cmp.loc[("be_10y", "Fed GSW be_10y"), "rmse_bp"] < 6
+    assert cmp.loc[("be_10y", "Fed GSW be_10y"), "corr_level"] > 0.95
+    inf = r.summary["inflation"]
+    assert set(inf["latest"]) >= {"be_5y", "be_10y", "be_5y5y", "real_10y"}
+    assert "Real yields and breakeven inflation" in render_markdown(r)
+    paths = write_outputs(r, tmp_path)
+    assert {"breakevens", "real_parameters", "badge_breakeven"} <= set(paths)
+    csv = pd.read_csv(paths["breakevens"], index_col=0)
+    assert {"be_5y5y", "FRED T5YIFR", "Fed GSW be_5y5y"} <= set(csv.columns)
+    assert "Real yields and breakeven inflation" in paths["dashboard"].read_text(encoding="utf-8")
+    # no TIPS data: everything else still runs
+    monkeypatch.setattr(pipeline, "load_tips_yields", _offline)
+    assert run_pipeline(cfg, data=(monthly, None, None)).breakevens is None
+
+
+def test_figures(result, tmp_path):
+    pytest.importorskip("matplotlib")
+    from nss_engine.figures import make_figures
+
+    paths = make_figures(result, tmp_path)
+    assert {"curve", "term_premium", "recession", "curve-dark"} <= set(paths)
+    for p in paths.values():
+        assert p.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    light_only = make_figures(result, tmp_path / "light", dark=False)
+    assert not any(k.endswith("-dark") for k in light_only)
+
+
 def test_csv_source(tmp_path, small_market):
     from nss_engine.data import label_columns
 
@@ -152,12 +303,15 @@ class TestCLI:
                 str(tmp_path),
                 "--no-dashboard",
                 "--print-report",
+                "--fast",
+                "--figures",
             ]
         )
         assert code == 0
         out = capsys.readouterr().out
         assert "median fit RMSE" in out and "# NSS Yield Curve Report" in out
         assert (tmp_path / "summary.json").exists() and not (tmp_path / "dashboard.html").exists()
+        assert (tmp_path / "img" / "curve.png").exists() and "Breakeven inflation" in out
 
     def test_curve(self, capsys):
         assert cli.main(["curve", "--source", "synthetic", "--date", "1995-06-30"]) == 0
@@ -176,3 +330,24 @@ class TestCLI:
         with pytest.raises(SystemExit):
             cli.main(["--version"])
         assert "nss-engine" in capsys.readouterr().out
+
+
+def test_text_files_are_written_as_utf8_on_any_platform():
+    # Windows defaults to cp1252, which cannot encode the report's Greek letters
+    # and minus signs: every text read or write must name its encoding.
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "src" / "nss_engine"
+    offenders = []
+    for path in src.glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"\.(write_text|read_text)\(|\bopen\(", text):
+            depth, j = 1, m.end()
+            while depth:
+                depth += {"(": 1, ")": -1}.get(text[j], 0)
+                j += 1
+            call = text[m.start() : j]
+            if "encoding=" not in call and "urlopen" not in text[m.start() - 7 : m.end()]:
+                offenders.append(f"{path.name}: {call[:60]}")
+    assert not offenders, offenders

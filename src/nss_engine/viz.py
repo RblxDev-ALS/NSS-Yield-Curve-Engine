@@ -436,19 +436,28 @@ def fig_recession_probability(r: PipelineResult) -> go.Figure | None:
     prob = m.fitted * 100
     fig = _fig(
         title=f"Probability of recession {m.horizon} months ahead (probit on the slope)",
-        height=380,
+        height=400,
         hovermode="x unified",
     )
     fig.add_scatter(
         x=prob.index,
         y=prob.values,
-        name="Probability",
+        name="10Y−3M probit, in sample",
         line=dict(color=SERIES[0], width=2),
         fill="tozeroy",
         fillcolor="rgba(42,120,214,0.10)",
         hovertemplate="%{y:.0f}%",
-        showlegend=False,
     )
+    if r.recession_real_time is not None:
+        for i, (name, series) in enumerate(r.recession_real_time.items()):
+            fig.add_scatter(
+                x=series.index,
+                y=series.to_numpy() * 100,
+                name=f"{name}, real time",
+                line=dict(color=SERIES[1 + i], width=1.6),
+                hovertemplate="%{y:.0f}%",
+                visible=True if i == 1 else "legendonly",
+            )
     _add_recessions(fig, r.recession, prob.index[0])
     fig.update_yaxes(title="%", range=[0, 100])
     fig.add_annotation(
@@ -553,6 +562,178 @@ def fig_dns_forecast(r: PipelineResult) -> go.Figure | None:
         line=dict(color=MUTED, width=2, dash="dot"),
         hovertemplate="%{y:.2f}%",
     )
+    return fig
+
+
+def fig_term_premium(r: PipelineResult) -> go.Figure | None:
+    """10-year yield split into expected short rates and term premium, with benchmarks."""
+    head = r.headline_acm
+    if r.acm is None or head is None:
+        return None
+    dec = head.decomposition(10)
+    surveyed = r.acm_survey is not None
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.5, 0.5],
+        subplot_titles=(
+            "10-year zero yield = expected short rate + term premium",
+            "10-year term premium: this engine vs other estimates",
+        ),
+    )
+    fig.add_scatter(
+        x=dec.index,
+        y=dec["fitted"],
+        name="10Y zero yield",
+        line=dict(color=INK_2, width=1.8),
+        hovertemplate="%{y:.2f}%",
+        row=1,
+        col=1,
+    )
+    fig.add_scatter(
+        x=dec.index,
+        y=dec["expected_short_rate"],
+        name="Expected short rate (10y avg)",
+        line=dict(color=SERIES[0], width=1.8),
+        hovertemplate="%{y:.2f}%",
+        row=1,
+        col=1,
+    )
+    fig.add_scatter(
+        x=dec.index,
+        y=dec["term_premium"],
+        name="Term premium (ACM + SPF surveys)" if surveyed else "Term premium (ACM on NSS curves)",
+        line=dict(color=SERIES[1], width=2.2),
+        hovertemplate="%{y:+.2f}%",
+        row=2,
+        col=1,
+    )
+    rt_head = r.headline_real_time
+    if rt_head is not None:
+        fig.add_scatter(
+            x=rt_head.index,
+            y=rt_head["term_premium"],
+            name="…estimated in real time",
+            line=dict(color=SERIES[1], width=1.4, dash="dot"),
+            hovertemplate="%{y:+.2f}%",
+            row=2,
+            col=1,
+        )
+    if surveyed:
+        plain = r.acm.decomposition(10)["term_premium"]
+        fig.add_scatter(
+            x=plain.index,
+            y=plain,
+            name="Plain ACM (no surveys)",
+            line=dict(color=SERIES[0], width=1.4),
+            hovertemplate="%{y:+.2f}%",
+            row=2,
+            col=1,
+        )
+        if r.term_premium_real_time is not None:
+            fig.add_scatter(
+                x=r.term_premium_real_time.index,
+                y=r.term_premium_real_time["term_premium"],
+                name="Plain ACM, real time",
+                line=dict(color=SERIES[0], width=1.2, dash="dot"),
+                hovertemplate="%{y:+.2f}%",
+                visible="legendonly",
+                row=2,
+                col=1,
+            )
+    for i, (name, series) in enumerate(r.term_premium_benchmarks.items()):
+        monthly = series.resample("ME").mean().loc[dec.index[0] :]
+        fig.add_scatter(
+            x=monthly.index,
+            y=monthly,
+            name=name,
+            line=dict(color=SERIES[2 + i], width=1.6),
+            hovertemplate="%{y:+.2f}%",
+            visible=True if i == 0 else "legendonly",
+            row=2,
+            col=1,
+        )
+    fig.add_hline(y=0, line=dict(color=AXIS, width=1), row=2, col=1)
+    for row in (1, 2):
+        _add_recessions(fig, r.recession, dec.index[0], row=row)
+    fig.update_yaxes(title="%", row=1, col=1)
+    fig.update_yaxes(title="%", row=2, col=1)
+    fig.update_layout(
+        template=_TEMPLATE,
+        height=620,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="top", y=-0.08, xanchor="left", x=0),
+        margin=dict(t=60, b=110),
+    )
+    fig.update_annotations(font=dict(size=13, color=INK_2))
+    return fig
+
+
+def fig_breakevens(r: PipelineResult) -> go.Figure | None:
+    """Real 10-year yield and breakeven inflation, with FRED's 5y5y for comparison."""
+    be = r.breakevens
+    if be is None:
+        return None
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.4, 0.6],
+        subplot_titles=("10-year real (TIPS) zero yield", "Breakeven inflation"),
+    )
+    fig.add_scatter(
+        x=be.index,
+        y=be["real_10y"],
+        name="10Y real yield",
+        line=dict(color=SERIES[0], width=1.8),
+        hovertemplate="%{y:.2f}%",
+        row=1,
+        col=1,
+    )
+    for i, (col, name) in enumerate(
+        (("be_5y", "5Y breakeven"), ("be_10y", "10Y breakeven"), ("be_5y5y", "5y5y forward"))
+    ):
+        fig.add_scatter(
+            x=be.index,
+            y=be[col],
+            name=name,
+            line=dict(color=SERIES[1 + i], width=2.2 if col == "be_5y5y" else 1.6),
+            hovertemplate="%{y:.2f}%",
+            row=2,
+            col=1,
+        )
+    bench = r.breakeven_benchmarks
+    if bench is not None:
+        for col in ("FRED T5YIFR", "true be_5y5y"):
+            if col in bench:
+                ref = bench[col].dropna()
+                ref = ref.resample("W-FRI").last() if len(ref) > 3 * len(be) else ref
+                fig.add_scatter(
+                    x=ref.index,
+                    y=ref,
+                    name=col.replace("true be_5y5y", "true 5y5y (synthetic)"),
+                    line=dict(color=MUTED, width=1.2),
+                    hovertemplate="%{y:.2f}%",
+                    visible="legendonly",
+                    row=2,
+                    col=1,
+                )
+    for row in (1, 2):
+        fig.add_hline(y=0, line=dict(color=AXIS, width=1), row=row, col=1)
+        _add_recessions(fig, r.recession, be.index[0], row=row)
+    fig.update_yaxes(title="%", row=1, col=1)
+    fig.update_yaxes(title="%", row=2, col=1)
+    fig.update_layout(
+        template=_TEMPLATE,
+        height=600,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="top", y=-0.08, xanchor="left", x=0),
+        margin=dict(t=60, b=100),
+    )
+    fig.update_annotations(font=dict(size=13, color=INK_2))
     return fig
 
 
@@ -720,7 +901,7 @@ header h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
 header p { margin: 0; color: var(--ink-2); }
 .banner { margin-top: 12px; padding: 10px 14px; border-radius: 8px; border:1px solid var(--border);
   background: var(--surface); color: var(--ink-2); }
-.tiles { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 24px 0; }
+.tiles { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 24px 0; }
 .tile { background: var(--surface); border:1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
 .tile .label { font-size: 13px; color: var(--ink-2); }
 .tile .value { font-size: 28px; font-weight: 600; margin-top: 2px; }
@@ -841,6 +1022,25 @@ def build_dashboard(
             ),
         )
 
+    if r.acm is not None:
+        tp_all = s["term_premium"]
+        tp_latest = tp_all["latest"]
+        sub = f"expected short rate {tp_latest['expected_short_rate']:.2f}%"
+        if r.acm_survey is not None:
+            sub = (
+                f"survey-anchored · plain ACM {tp_all['plain_acm']['latest']['term_premium']:+.2f}%"
+            )
+        tiles.append(_tile("10Y term premium", f"{tp_latest['term_premium']:+.2f}%", sub))
+    if "inflation" in s:
+        be_last = s["inflation"]["latest"]
+        tiles.append(
+            _tile(
+                "10Y breakeven inflation",
+                f"{be_last['be_10y']:.2f}%",
+                f"5y5y forward {be_last['be_5y5y']:.2f}%",
+            )
+        )
+
     obs = r.yields.iloc[-1]
     today = pd.DataFrame(
         {
@@ -906,6 +1106,81 @@ def build_dashboard(
             + "</details>"
         )
 
+    tp_section = ""
+    if r.acm is not None:
+        tp = s["term_premium"]["latest"]
+        tp_tables = ""
+        if r.term_premium_comparison is not None:
+            cmp = r.term_premium_comparison.copy()
+            cmp.index = [f"{e} vs {b}" for e, b in cmp.index]
+            cmp.columns = [
+                "corr (level)",
+                "corr (12m change)",
+                "RMSE (bp)",
+                "mean gap (bp)",
+                "months",
+            ]
+            tp_tables += (
+                "<details><summary>Agreement with other estimates</summary>"
+                + _table_html(cmp, "{:.2f}")
+                + "</details>"
+            )
+        if r.term_premium_recession is not None:
+            rc = r.term_premium_recession[
+                ["auc_in_sample", "auc_out_of_sample", "brier_out_of_sample", "latest_probability"]
+            ]
+            tp_tables += (
+                "<details><summary>Which part of the slope predicts recessions?</summary>"
+                + _table_html(rc, "{:.3f}")
+                + "</details>"
+            )
+        anchor = (
+            " Its expected short rates are also fitted to the Philadelphia Fed's Survey of "
+            "Professional Forecasters, so they do not simply revert to the 1990-2026 average "
+            "of rates; plain ACM is shown for comparison."
+            if r.acm_survey is not None
+            else ""
+        )
+        tp_section = (
+            "<section><h2>Expected rates vs term premium</h2>"
+            "<p>A 10-year yield is the average short rate investors expect over the next decade plus a "
+            "<em>term premium</em>, the extra return demanded for holding a long bond. The "
+            "Adrian-Crump-Moench model (the method behind the New York Fed's published premium) "
+            f"separates the two.{anchor} Latest: {tp['fitted']:.2f}% = {tp['expected_short_rate']:.2f}% "
+            f"expected {'+' if tp['term_premium'] >= 0 else '−'} {abs(tp['term_premium']):.2f}% term premium.</p>"
+            f"{embed(fig_term_premium(r))}{tp_tables}</section>"
+        )
+
+    be_section = ""
+    if r.breakevens is not None and "inflation" in s:
+        inf = s["inflation"]
+        be_tables = ""
+        if r.breakeven_comparison is not None:
+            cmp = r.breakeven_comparison.copy()
+            cmp.index = [f"{e} vs {b}" for e, b in cmp.index]
+            cmp.columns = [
+                "corr (level)",
+                "corr (1m change)",
+                "RMSE (bp)",
+                "mean gap (bp)",
+                "months",
+            ]
+            be_tables = (
+                "<details><summary>Agreement with other measures</summary>"
+                + _table_html(cmp, "{:.2f}")
+                + "</details>"
+            )
+        be_section = (
+            "<section><h2>Real yields and breakeven inflation</h2>"
+            "<p>TIPS pay a real yield. Fitting their curve next to the nominal one gives breakeven "
+            "inflation at every maturity, and the 5-year, 5-year forward breakeven, the market's "
+            "inflation compensation for years 5 to 10. It includes risk and liquidity premia, so it is "
+            f"not a pure forecast. Latest ({inf['as_of']}): 10-year real yield "
+            f"{inf['latest']['real_10y']:.2f}%, 10-year breakeven {inf['latest']['be_10y']:.2f}%, "
+            f"5y5y {inf['latest']['be_5y5y']:.2f}%.</p>"
+            f"{embed(fig_breakevens(r))}{be_tables}</section>"
+        )
+
     ref_section = ""
     if r.reference is not None:
         ov = s["reference_curve"]
@@ -930,7 +1205,7 @@ def build_dashboard(
 </header>
 <div class="tiles">{"".join(tiles)}</div>
 
-<section><h2>Today's curve</h2>
+<section><h2>The latest curve</h2>
 <p>Dots are observed constant-maturity yields; the line is the calibrated NSS curve. The forward curve shows
 the rates the market implies for future short-term borrowing.</p>
 {snapshot_html}
@@ -962,6 +1237,10 @@ Fed funds rate off the NSS forward curve: below zero, cuts are priced in.</p>
 {embed(fig_pca(r))}
 <details><summary>Correlation with model-free proxies</summary>{_table_html(r.proxy_correlations, "{:.3f}")}</details>
 </section>
+
+{tp_section}
+
+{be_section}
 
 {ref_section}
 
