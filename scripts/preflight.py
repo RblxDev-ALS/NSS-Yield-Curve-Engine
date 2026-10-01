@@ -274,7 +274,8 @@ def check_pypi(pyproject: dict[str, Any] | None, why: str) -> list[Result]:
                 FAIL,
                 name,
                 f"{PACKAGE} is not on PyPI yet",
-                "follow docs/releasing.md (trusted publisher, then push tag v" + local + ")",
+                "add the pending publisher on PyPI and the pypi environment on GitHub, then "
+                "Actions > Release > Run workflow with publish ticked (docs/releasing.md)",
             )
         ]
     if status != 200:
@@ -291,7 +292,7 @@ def check_pypi(pyproject: dict[str, Any] | None, why: str) -> list[Result]:
                 WARN,
                 name,
                 f"PyPI has {latest} but pyproject.toml says {local}",
-                f"tag v{local} and push it (docs/releasing.md), or lower the version",
+                "merge to main, then Actions > Release > Run workflow with publish ticked",
             )
         ]
     return [
