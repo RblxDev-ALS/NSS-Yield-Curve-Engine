@@ -182,6 +182,34 @@ simulates 8 arbitrage-free markets of 440 months with a near-unit-root level
 The same ranking as on real data, and even surveys that are half a point too
 high throughout beat no surveys.
 
+### Checked against the New York Fed's own ACM series
+
+New in 2.5. The New York Fed publishes the ACM premium as its authors
+estimate it, on the Fed's GSW curve since 1961. Running this package's code
+on the same curve and sample reproduces it; starting the sample in 1990
+instead moves it most of the way to the plain-ACM numbers above. Comparison
+over the 441 months since January 1990 (published series: mean 1.06%):
+
+| 10-year premium vs the New York Fed's | mean | corr. | corr. of 12-month changes | RMSE | mean gap |
+|---|---:|---:|---:|---:|---:|
+| **this package's ACM, Fed curve since 1961** | 0.86% | **1.000** | **0.999** | 20 bp | −20 bp |
+| same, Fed curve since 1990 | 1.72% | 0.944 | 0.912 | 86 bp | +66 bp |
+| same, this engine's curves since 1990 | 1.83% | 0.918 | 0.844 | 95 bp | +77 bp |
+| survey-anchored, this engine's curves | 0.76% | 0.737 | 0.453 | 86 bp | −30 bp |
+| Kim–Wright | 0.82% | 0.862 | 0.715 | 72 bp | −24 bp |
+
+Two things follow. **The implementation is right**: on the same inputs the
+series moves one for one with the published one; what remains is a constant
+20 bp offset in the split (the fitted yields agree), most likely because the
+published parameters come from a different estimation window. And **plain
+ACM's point-high premium is mostly a sample artefact**: the same code on the
+same curve gives 0.86% from 1961 and 1.72% from 1990. A sample that starts
+near the top of a forty-year fall in rates teaches the model that rates revert
+to a lower level than they started at, so it reads more of the 1990s' yields as
+premium. Surveys bring the level down to Kim–Wright's, but the models still
+disagree about the moves: 12-month changes in the published ACM series
+correlate 0.72 with Kim–Wright's and 0.45 with the survey-anchored series.
+
 ## Recessions
 
 Every U.S. recession since the late 1960s was preceded by an inverted curve.

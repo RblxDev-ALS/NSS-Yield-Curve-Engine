@@ -42,6 +42,21 @@ structure model at all, and the survey-anchored estimate agrees with it better
 known, surveys cut the real-time error from 82 to 13 bp, even surveys biased
 by half a point help (53 bp).
 
+**"Is your ACM even implemented correctly? The NY Fed publishes it."**
+Yes, and the project checks against it. Run on the Fed's own curve since 1961,
+as ACM do, this package's code moves one for one with the published 10-year
+premium (correlation 1.000, 12-month changes 0.999) with a constant 20 bp
+offset. Starting the same model in 1990 instead adds about 65 bp: that, not
+the code, is why plain ACM on 1990–2026 data sits a point above Kim–Wright.
+
+**"A term premium is an expected return. Does yours predict returns?"**
+This is the 2.5 study; see docs/results.md, "Do term premia predict bond
+returns?", for the latest numbers. Short version: plain ACM's premium has a
+little out-of-sample power for 10-year bond returns, the survey-anchored one,
+which matches Kim–Wright best, has none, because the surveys kept expecting
+rate rises that did not come. The Cochrane–Piazzesi factor, famous in sample,
+does far worse than the historical mean out of sample.
+
 **"Did you try the bias-corrected VAR (Bauer–Rudebusch–Wu)?"**
 Yes, analytic and bootstrap. On real data it barely moves the level (RMSE vs
 Kim–Wright 113–117 bp) and makes 12-month changes worse (correlation 0.37–0.46
