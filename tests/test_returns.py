@@ -123,3 +123,11 @@ def test_real_time_expected_returns_match_a_fit_on_past_data():
     future.iloc[t + 1 :] += 3.0
     rt2 = ret.real_time_expected_returns(future, min_train=150, n_factors=3)
     pd.testing.assert_series_equal(rt.loc[mkt.yields.index[t]], rt2.loc[mkt.yields.index[t]])
+
+
+def test_gaps_in_the_monthly_panel_are_refused():
+    zeros = _flat_panel().drop(index=pd.Timestamp("2001-06-30"))
+    with pytest.raises(ValueError, match="no gaps"):
+        ret.excess_returns(zeros)
+    with pytest.raises(ValueError):
+        ret.forward_spot_spread(_flat_panel(months=60), 120)

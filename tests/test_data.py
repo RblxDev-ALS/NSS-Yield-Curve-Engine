@@ -369,3 +369,13 @@ def test_parse_acm_frame_and_download(tmp_path, monkeypatch):
     assert len(calls) == 2 and len(cached) == 1  # dates survive the CSV cache unchanged
     with pytest.raises(ValueError):
         data.load_acm_term_premium(maturity=11)
+
+
+def test_acm_dates_are_never_guessed_row_by_row():
+    raw = pd.DataFrame({"DATE": ["01/02/2020", "01/13/2020"], "ACMTP10": [1.0, 2.0]})
+    out = data.parse_acm_frame(raw)  # U.S. month/day, read as such for every row
+    assert list(out.index) == [pd.Timestamp("2020-01-02"), pd.Timestamp("2020-01-13")]
+    serial = pd.DataFrame({"DATE": [43831.0, 43832.0], "ACMTP10": [1.0, 2.0]})
+    assert data.parse_acm_frame(serial).index[0] == pd.Timestamp("2020-01-01")
+    with pytest.raises(DataError):
+        data.parse_acm_frame(pd.DataFrame({"DATE": ["n/a"], "ACMTP10": [1.0]}))

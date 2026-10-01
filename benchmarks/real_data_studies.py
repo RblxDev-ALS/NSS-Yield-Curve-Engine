@@ -397,6 +397,9 @@ def return_predictability_study(
         )
         # score every forecast on the same origins
         common = pd.concat([y, bench, *fcs.values()], axis=1).dropna().index
+        if len(common) < 48:
+            print(f"(too few common forecast origins for the {n // 12}Y bond: {len(common)})")
+            continue
         for name, f in fcs.items():
             sc = bond_returns.evaluate_return_forecasts(
                 y.loc[common], f.loc[common], bench.loc[common], horizon
@@ -420,6 +423,8 @@ def return_predictability_study(
                 "origins": sc.n,
             }
         first, last = common[0], common[-1]
+    if not rows:
+        return
     table = pd.DataFrame(rows).T
     table.index.names = ["bond", "forecast"]
     print(

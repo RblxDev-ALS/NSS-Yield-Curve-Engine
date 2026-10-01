@@ -58,6 +58,15 @@ DEFAULT_MATURITIES = (24, 60, 120)
 # =============================================================================
 
 
+def _check_monthly(index: pd.Index) -> None:
+    """Rows must be consecutive months: returns are found by counting rows."""
+    if isinstance(index, pd.DatetimeIndex) and len(index) > 1:
+        months = index.to_period("M")
+        steps = np.diff(months.year * 12 + months.month)
+        if not (steps == 1).all():
+            raise ValueError("the panel needs one row per month with no gaps")
+
+
 def _months(zero_yields: pd.DataFrame) -> dict[int, str | float]:
     """Map whole months to the panel's column labels (maturities in years)."""
     out: dict[int, str | float] = {}
@@ -83,6 +92,7 @@ def excess_returns(
     *formation* date ``t``; the last ``horizon`` rows are missing. Columns are
     the maturities in years.
     """
+    _check_monthly(zero_yields.index)
     cols = _months(zero_yields)
     out = {}
     for n in maturities:
@@ -122,6 +132,9 @@ def forward_spot_spread(zero_yields: pd.DataFrame, maturity: int, horizon: int =
     """Fama–Bliss predictor: the forward rate from ``n − h`` to ``n`` months minus the ``h``-month yield."""
     cols = _months(zero_yields)
     n, h = maturity, horizon
+    missing = [m for m in (n, n - h, h) if m not in cols]
+    if missing:
+        raise ValueError(f"zero panel lacks the {missing}-month yields")
     fwd = (zero_yields[cols[n]] * n - zero_yields[cols[n - h]] * (n - h)) / h
     return (fwd - zero_yields[cols[h]]).rename(f"fb{n}")
 
@@ -220,6 +233,7 @@ def real_time_expected_returns(
     """
     from .termpremium import fit_acm
 
+    _check_monthly(zero_yields.index)
     cols = [n / 12.0 for n in maturities]
     rows = {}
     for t in range(min_train - 1, len(zero_yields)):
@@ -387,7 +401,8 @@ def evaluate_return_forecasts(
         return ReturnForecastScore(n, nan, nan, nan, nan, nan, nan, nan)
     y, f, b = (df[c].to_numpy(dtype=float) for c in ("y", "f", "b"))
     e_f, e_b = y - f, y - b
-    r2 = 1.0 - float(e_f @ e_f) / float(e_b @ e_b)
+    sse_b = float(e_b @ e_b)
+    r2 = 1.0 - float(e_f @ e_f) / sse_b if sse_b > 0 else nan
     cw = e_b**2 - (e_f**2 - (b - f) ** 2)
     mean, se = _newey_west_mean(cw, horizon)
     stat = mean / se if se > 0 else nan

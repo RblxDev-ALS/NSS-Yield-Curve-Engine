@@ -410,9 +410,7 @@ def parse_acm_frame(df: pd.DataFrame, maturity: int = 10) -> pd.DataFrame:
     }
     if f"ACMTP{nn}" not in cols:
         raise DataError(f"ACM file lacks ACMTP{nn}")
-    dates = df[cols["DATE"]]
-    if not pd.api.types.is_datetime64_any_dtype(dates):
-        dates = pd.to_datetime(dates.astype(str), format="mixed", errors="coerce")
+    dates = _parse_dates(df[cols["DATE"]])
     out = pd.DataFrame(
         {
             new: pd.to_numeric(df[cols[old]], errors="coerce")
@@ -421,8 +419,31 @@ def parse_acm_frame(df: pd.DataFrame, maturity: int = 10) -> pd.DataFrame:
         }
     )
     out.index = pd.DatetimeIndex(dates, name="date")
-    out = out[out.index.notna()].sort_index()
-    return out.dropna(how="all")
+    out = out[out.index.notna()].sort_index().dropna(how="all")
+    if out.empty:
+        raise DataError("no dated values in the ACM file")
+    return out
+
+
+def _parse_dates(values: pd.Series) -> pd.Series:
+    """Dates from a spreadsheet column: datetimes, Excel serial numbers or text.
+
+    Text is tried against whole-column formats first (``02-Jan-1962``, ISO,
+    U.S. ``01/02/1962``) so that day and month are never guessed row by row.
+    """
+    if pd.api.types.is_datetime64_any_dtype(values):
+        return pd.Series(pd.to_datetime(values), index=values.index)
+    if pd.api.types.is_numeric_dtype(values):
+        return pd.Series(
+            pd.to_datetime(values, unit="D", origin="1899-12-30", errors="coerce"),
+            index=values.index,
+        )
+    text = values.astype(str).str.strip()
+    for fmt in ("%d-%b-%Y", "%Y-%m-%d", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S"):
+        parsed = pd.to_datetime(text, format=fmt, errors="coerce")
+        if parsed.notna().mean() > 0.95:
+            return parsed
+    return pd.to_datetime(text, format="mixed", errors="coerce")
 
 
 def load_acm_term_premium(
@@ -491,9 +512,7 @@ def _download_acm() -> pd.DataFrame:
         if usable:
             df = max(usable, key=len)
             date_col = next(c for c in df.columns if str(c).strip().upper() == "DATE")
-            df[date_col] = pd.to_datetime(
-                df[date_col].astype(str), format="mixed", errors="coerce"
-            ).dt.strftime("%Y-%m-%d")
+            df[date_col] = _parse_dates(df[date_col]).dt.strftime("%Y-%m-%d")
             return df
         errors.append(f"no sheet with a DATE column in {url}")
     raise DataError("; ".join(errors))
