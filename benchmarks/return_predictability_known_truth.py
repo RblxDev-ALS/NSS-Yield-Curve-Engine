@@ -9,7 +9,8 @@ real-time estimates fall below it:
 
 * the true expected one-year excess return (no estimation at all);
 * ACM's expected return, plain and survey-anchored, re-estimated each month
-  on past data (first estimate after 60 months);
+  on past data (first estimate after 60 months), and anchored to surveys that
+  expect rates half a point higher than the truth;
 * Fama-Bliss and Cochrane-Piazzesi regressions, re-estimated each month.
 
 All are scored against the expanding historical mean on the same forecast
@@ -17,13 +18,14 @@ origins, as in ``real_data_studies.py``. Run time is a few minutes per market.
 
 Usage::
 
-    python benchmarks/return_predictability_known_truth.py --markets 4
+    python benchmarks/return_predictability_known_truth.py --markets 4 --jobs 4
 """
 
 from __future__ import annotations
 
 import argparse
 import time
+from concurrent.futures import ProcessPoolExecutor
 
 import pandas as pd
 
@@ -45,6 +47,10 @@ def one_market(seed: int, periods: int, horizon: int = 12) -> dict[tuple[str, st
     anchored = bond_returns.real_time_expected_returns(
         zeros, horizon, mats, min_train=60, n_factors=3, surveys=surveys
     )
+    # forecasters who expect rates 0.5 points higher than the truth, as the SPF did in 2000-2025
+    biased = bond_returns.real_time_expected_returns(
+        zeros, horizon, mats, min_train=60, n_factors=3, surveys=mkt.surveys(seed=seed, bias_pp=0.5)
+    )
     out = {}
     for n in mats:
         col = n / 12.0
@@ -54,6 +60,7 @@ def one_market(seed: int, periods: int, horizon: int = 12) -> dict[tuple[str, st
             "truth: true expected return": true[col],
             "ACM, plain (real time)": plain[col],
             "ACM, survey-anchored (real time)": anchored[col],
+            "ACM, anchored to surveys biased +0.5 pp": biased[col],
             "Fama-Bliss forward spread": bond_returns.real_time_regression_forecasts(
                 y, bond_returns.forward_spot_spread(zeros, n, horizon).to_frame(), horizon
             ),
@@ -76,19 +83,26 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--markets", type=int, default=4)
     ap.add_argument("--periods", type=int, default=440)
+    ap.add_argument("--jobs", type=int, default=1, help="markets simulated in parallel")
     args = ap.parse_args()
     t0 = time.perf_counter()
-    runs = [pd.DataFrame(one_market(s, args.periods)).T for s in range(args.markets)]
-    table = pd.concat(runs).groupby(level=[0, 1], sort=False).mean()
+    with ProcessPoolExecutor(args.jobs) as pool:
+        results = pool.map(one_market, range(args.markets), [args.periods] * args.markets)
+        runs = [pd.DataFrame(r).T for r in results]
+    grouped = pd.concat(runs).groupby(level=[0, 1], sort=False)
+    table = grouped.mean()
+    table.insert(1, "R² OOS > 0", grouped["R² OOS (%)"].apply(lambda r: float((r > 0).mean())))
+    table.insert(1, "sd across markets", grouped["R² OOS (%)"].std())
     table.index.names = ["bond", "forecast"]
     print(
         f"## Known truth: one-year excess returns, {args.markets} simulated markets of "
         f"{args.periods} months\n"
     )
     print(
-        "Averages over markets: out-of-sample R² against the historical mean, the share of "
-        "markets where the Clark-West test rejects at 10%, and the slope of realized on "
-        "forecast returns (1 = calibrated).\n"
+        "Averages over markets: out-of-sample R² against the historical mean (with its "
+        "standard deviation across markets and the share of markets where it is positive), "
+        "the share of markets where the Clark-West test rejects at 10%, and the slope of "
+        "realized on forecast returns (1 = calibrated).\n"
     )
     print(table.to_markdown(floatfmt=".2f"))
     print(f"\n({time.perf_counter() - t0:.0f} s)")
