@@ -99,7 +99,7 @@ significantly too wide.
 
 - Data: FRED's 11 Treasury constant-maturity yields, TIPS real yields,
   NBER recessions and Kim–Wright; the Fed's GSW nominal and TIPS curves; the
-  Philadelphia Fed's SPF. Cached, retried, and read from the cache when a
+  New York Fed's ACM term premium; the Philadelphia Fed's SPF. Cached, retried, and read from the cache when a
   source is down.
 - Calibration: NSS fitted to par yields by variable projection, an
   exhaustive grid over the decay rates and multi-start refinement with an
@@ -107,7 +107,8 @@ significantly too wide.
   About 26 ms per curve.
 - Term premium: Adrian–Crump–Moench, plain or with expectations anchored
   to surveys (the default) or bias-corrected; full sample and re-estimated
-  month by month.
+  month by month; checked against the New York Fed's published series and
+  against the excess returns bonds went on to earn.
 - Inflation: TIPS real curve, zero-coupon and 5y5y forward breakevens,
   compared with FRED and the Fed.
 - Recessions: NY Fed-style probit, the near-term forward spread
@@ -140,6 +141,11 @@ from nss_engine.data import load_tips_yields
 from nss_engine.inflation import breakevens, fit_real_curve
 real = fit_real_curve(load_tips_yields())              # TIPS real curve, weekly since 2003
 breakevens(fit.params, real.params).tail()             # 5Y, 10Y and 5y5y breakeven inflation
+
+from nss_engine.returns import excess_returns
+zeros = zero_panel(fit.params)
+excess_returns(zeros).tail()                           # what 2/5/10-year bonds earned over bills
+acm.expected_excess_returns().tail()                   # what the model expected them to earn
 ```
 
 More in [`examples/quickstart.py`](examples/quickstart.py) (risk, carry,

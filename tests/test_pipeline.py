@@ -164,6 +164,8 @@ def test_term_premium_benchmarks_for_fred_source(monkeypatch, long_market, tmp_p
     kw = pd.Series(np.linspace(2.0, 0.0, len(truth)), index=truth.index, name="kim_wright_tp10")
     monkeypatch.setattr(pipeline, "load_gsw_parameters", lambda *a, **k: truth)
     monkeypatch.setattr(pipeline, "load_kim_wright_term_premium", lambda *a, **k: kw)
+    nyfed = pd.DataFrame({"term_premium": kw + 0.5})
+    monkeypatch.setattr(pipeline, "load_acm_term_premium", lambda *a, **k: nyfed)
     # survey forecasts: next quarter's bill rate = today's 3M yield, ten-year = today's 10Y
     q = monthly[monthly.index.month.isin([2, 5, 8, 11])]
     wide = pd.DataFrame(
@@ -181,11 +183,12 @@ def test_term_premium_benchmarks_for_fred_source(monkeypatch, long_market, tmp_p
     r = run_pipeline(cfg, data=(monthly, None, None))
     assert set(r.term_premium_benchmarks) == {
         "Kim-Wright (Fed Board)",
+        "ACM (New York Fed)",
         "ACM on the Fed's GSW curve",
     }
     cmp = r.term_premium_comparison
-    # (full sample, survey-anchored, real time, survey-anchored real time) x (two benchmarks)
-    assert len(cmp) == 8
+    # (full sample, survey-anchored, real time, survey-anchored real time) x (three benchmarks)
+    assert len(cmp) == 12
     assert r.acm_survey is not None and r.acm_survey.p_dynamics == "survey"
     # the survey-anchored estimate is the headline
     assert r.headline_acm is r.acm_survey and r.term_premium_method == "survey-anchored ACM"
