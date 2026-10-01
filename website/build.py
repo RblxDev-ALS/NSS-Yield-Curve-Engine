@@ -765,6 +765,8 @@ def landing(s: dict[str, Any], site: Path) -> str:
   <a class="button" href="dashboard.html">Open the interactive dashboard</a>
   <a href="results.html">How accurate is it?</a>
   <a href="{REPO}">Source code</a>
+  <span class="install"><code>pip install nss-engine</code><button type="button"
+    data-copy="pip install nss-engine" aria-label="Copy the install command">Copy</button></span>
 </div>
 
 <h2>Latest reading</h2>

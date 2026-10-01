@@ -58,6 +58,7 @@ def test_build_site(tmp_path):
     assert "10-year term premium" in index and "breakeven" in index
     assert index.count("<polyline") >= 5  # sparklines from the CSVs
     assert 'property="og:image"' in index and "favicon.svg" in index
+    assert 'data-copy="pip install nss-engine"' in index and "clipboard" in index
     methodology = (tmp_path / "methodology.html").read_text(encoding="utf-8")
     assert "MathJax" in methodology and "On this page" in methodology
     dashboard = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
