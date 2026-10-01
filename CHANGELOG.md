@@ -47,6 +47,11 @@
   in all 16 surveys whose window has passed (by 2.2 pp on average). The
   Cochrane–Piazzesi factor explains 21–27% of returns in sample and does far
   worse than the mean out of sample (−43% to −69%), a negative result.
+* **Known truth** (24 simulated markets of 440 months): the true expected
+  return reaches an out-of-sample R² of 11% for the 10-year bond, the
+  survey-anchored premium with accurate surveys 11%, with surveys biased
+  +0.5 pp −8%, plain ACM 0%; Fama–Bliss and Cochrane–Piazzesi lose (−10%,
+  −15%).
 * The survey-anchored premium stays the headline: it is the better estimate
   of what investors expected (Kim–Wright, the model-free survey premium);
   docs/results.md explains why that is a different question from what bonds

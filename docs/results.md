@@ -269,6 +269,32 @@ worse than the historical average, mainly in 2000–13, as Thornton & Valente
 (2012) found for an earlier sample. The in-sample R² of plain ACM's expected
 return is similar (21–24%) and also shrinks out of sample.
 
+**Checked against a known truth.** `benchmarks/return_predictability_known_truth.py`
+runs the same race on 24 simulated arbitrage-free markets of 440 months
+(near-unit-root level, time-varying risk premia, SPF-style surveys), where the
+true expected returns are known. Averages for the 10-year bond:
+
+| forecast | R² OOS | sd across markets | share of markets > 0 | slope |
+|---|---:|---:|---:|---:|
+| the true expected return | 11.2% | 12.1 | 83% | 1.03 |
+| **survey-anchored ACM, accurate surveys** | **10.7%** | 9.6 | 88% | 1.02 |
+| survey-anchored ACM, surveys biased +0.5 pp | −8.3% | 20.7 | 38% | 0.81 |
+| plain ACM | 0.2% | 11.4 | 38% | 0.28 |
+| Fama–Bliss forward spread | −10.0% | 12.4 | 21% | 0.02 |
+| Cochrane–Piazzesi factor | −14.5% | 17.7 | 17% | 0.09 |
+
+Three lessons. Even a perfect estimate of the premium explains only about a
+tenth of one-year returns over a sample this long, and loses to the historical
+mean in one market in six, so the real-data scores above are noisy. With
+accurate surveys, anchoring is nearly as good as knowing the truth. And
+surveys that expect rates half a point too high, as the SPF did, turn that
+into a loss: the slope stays near 1 (the ups and downs are right) but the
+level is wrong. On real data, regressions that correct the level do not
+rescue the survey-anchored premium either, so the SPF's errors were not just a
+constant offset. (Fama–Bliss does well on real data and badly here, because
+the simulated premium does not depend on the forward spread the way the real
+one seems to.)
+
 Caveats: about 25 independent years, one long fall in rates and its reversal;
 the Clark–West test with overlapping returns rejects a little too often (13%
 at a nominal 10% in a small simulation with an irrelevant predictor); and Kim–Wright's
