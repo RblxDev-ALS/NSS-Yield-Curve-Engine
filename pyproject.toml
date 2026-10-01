@@ -7,6 +7,9 @@ name = "nss-engine"
 version = "2.4.0"
 description = "U.S. Treasury yield curve engine: Nelson-Siegel-Svensson fits since 1990, a survey-anchored term premium, breakeven inflation, recession signals and forecasts, all tested out of sample."
 dynamic = ["readme"]
+# your name as it should appear on PyPI; keep it the same as in CITATION.cff and
+# website/build.py (AUTHOR) - tests/test_examples.py checks that they agree
+authors = [{ name = "RblxDev-ALS" }]
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
@@ -23,6 +26,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Office/Business :: Financial :: Investment",
     "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
 ]
 dependencies = [
     "numpy>=1.24",

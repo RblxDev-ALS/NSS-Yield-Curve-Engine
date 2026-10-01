@@ -1,7 +1,8 @@
 # Releasing nss-engine to PyPI
 
-Releases are published by [`.github/workflows/release.yml`](../.github/workflows/release.yml)
-when a tag `v<version>` is pushed. It uses PyPI's
+Releases are published by [`.github/workflows/release.yml`](../.github/workflows/release.yml),
+started from the Actions tab (no git commands needed) or by pushing a tag
+`v<version>`. It uses PyPI's
 [trusted publishing](https://docs.pypi.org/trusted-publishers/): PyPI trusts
 this workflow in this repository, so no API token is created or stored.
 
@@ -26,8 +27,9 @@ this workflow in this repository, so no API token is created or stored.
 
 4. **Create the `pypi` environment on GitHub**: *Settings → Environments → New
    environment → `pypi`*. Optionally add yourself under *Required reviewers*,
-   so that every upload waits for a click, and restrict *Deployment branches
-   and tags* to the tag pattern `v*`.
+   so that every upload waits for a click. If you restrict *Deployment
+   branches and tags*, allow both the branch `main` (for releases started from
+   the Actions tab) and the tag pattern `v*`.
 
 Optional: repeat steps 2–4 on <https://test.pypi.org> with an environment
 named `testpypi` to rehearse; the workflow would need a second publish job
@@ -39,17 +41,25 @@ with `repository-url: https://test.pypi.org/legacy/`.
    `src/nss_engine/__init__.py`, `CITATION.cff`, and a new `## <version> — …`
    section at the top of `CHANGELOG.md`. A test checks that they agree.
 2. Merge to `main` and wait for CI to pass.
-3. Tag the merge commit and push the tag:
+3. Publish, either way:
 
-   ```bash
-   git checkout main && git pull
-   git tag -a v2.4.0 -m "nss-engine 2.4.0"
-   git push origin v2.4.0
-   ```
+   * **From the browser**: *Actions → Release → Run workflow*, branch `main`,
+     tick *Publish the version in pyproject.toml to PyPI and tag it*, and
+     click *Run workflow*. The release is tagged `v<version>` on the commit
+     it was built from.
+   * **From a terminal**: tag the merge commit and push the tag:
+
+     ```bash
+     git checkout main && git pull
+     git tag -a v2.5.0 -m "nss-engine 2.5.0"
+     git push origin v2.5.0
+     ```
 
 The workflow then
 
-* checks that the tag matches the version in `pyproject.toml`,
+* checks that the tag matches the version in `pyproject.toml` (or, when
+  started from the Actions tab, that it runs on `main` and that the version
+  has not been released yet),
 * builds the sdist and wheel, runs `twine check --strict`, installs the wheel
   in a clean environment and fits a curve with it,
 * uploads to PyPI from the `pypi` environment, and
@@ -67,5 +77,5 @@ problems show up before a release.
 
 ```bash
 pip install nss-engine               # the engine
-pip install "nss-engine[surveys]"    # plus openpyxl, to read the SPF survey files
+pip install "nss-engine[surveys]"    # plus openpyxl and xlrd, to read the SPF and New York Fed files
 ```
