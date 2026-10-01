@@ -107,6 +107,18 @@ class ACMResult:
             }
         )
 
+    def expected_excess_returns(
+        self, horizon: int = 12, maturities: Sequence[int] = (24, 60, 120)
+    ) -> pd.DataFrame:
+        """Expected ``horizon``-month excess returns on zero-coupon bonds (percent).
+
+        Columns are maturities in years; see
+        :func:`~nss_engine.returns.acm_expected_excess_returns`.
+        """
+        from .returns import acm_expected_excess_returns
+
+        return acm_expected_excess_returns(self, horizon, maturities)
+
     @property
     def max_eigenvalue(self) -> float:
         """Largest absolute eigenvalue of the VAR (persistence of the factors)."""

@@ -233,6 +233,8 @@ class AffineMarket:
     mu: np.ndarray | None = None  #: real-world VAR intercept (percent)
     phi: np.ndarray | None = None  #: real-world VAR slope
     bill_loadings: tuple[float, np.ndarray] | None = None  #: 3-month yield = c0 + c1'X
+    #: log bond prices ``A_n + B_n'X`` for n = 1 … max_months (risk-neutral pricing)
+    price_loadings: tuple[np.ndarray, np.ndarray] | None = None
 
     def expected_bill_rate(self, start: int, end: int) -> pd.Series:
         """True expectation, at each date, of the average 3-month yield ``start…end`` months ahead."""
@@ -245,6 +247,21 @@ class AffineMarket:
         W = np.mean(powers, axis=0)
         D = self.factors.to_numpy() - xbar
         return pd.Series(c0 + c1 @ xbar + D @ W.T @ c1, index=self.factors.index)
+
+    def expected_excess_returns(
+        self, horizon: int = 12, maturities: tuple[int, ...] = (24, 60, 120)
+    ) -> pd.DataFrame:
+        """True expected ``horizon``-month log excess returns (percent) at each date."""
+        from .returns import model_expected_excess_returns
+
+        if self.mu is None or self.phi is None or self.price_loadings is None:
+            raise ValueError("market has no stored dynamics")
+        A, B = self.price_loadings
+        X = self.factors.to_numpy()
+        values = model_expected_excess_returns(X, self.mu, self.phi, A, B, horizon, maturities)
+        return pd.DataFrame(
+            values, index=self.factors.index, columns=[n / 12.0 for n in maturities]
+        )
 
     def surveys(
         self,
@@ -334,4 +351,5 @@ def simulate_affine_market(
         mu=mu,
         phi=phi,
         bill_loadings=(float(-A[2] / 3 * 1200.0), -B[2] / 3 * 1200.0),
+        price_loadings=(A, B),
     )
