@@ -32,7 +32,32 @@
   the model's expected ones.
 
 ### Results on FRED data
-(to be filled from the live run)
+* **ACM replication.** On the Fed's curve since 1961, as ACM estimate it, this
+  package's code tracks the New York Fed's published 10-year premium with
+  correlation 1.000 (12-month changes 0.999) and a constant offset of 20 bp.
+  The same code from 1990 averages 1.72% instead of 0.86%: plain ACM's point
+  gap to Kim–Wright on 1990–2026 data comes mostly from the sample start.
+* **Bond returns, 2000–2025** (one-year excess returns, forecasts in real
+  time, against the historical mean): for the 10-year bond, plain ACM's
+  real-time 10-year premium (R² OOS 8.8%, Clark–West p = 0.005) and the
+  Fama–Bliss forward spread (7.6%, p = 0.017) beat the mean, in both halves
+  of the sample. The survey-anchored premium does not (its expected return,
+  −0.2% a year, R² OOS −44%): the SPF expected higher bill rates than came at
+  every horizon, 65–76% of the time, and the ten-year forecast was too high
+  in all 16 surveys whose window has passed (by 2.2 pp on average). The
+  Cochrane–Piazzesi factor explains 21–27% of returns in sample and does far
+  worse than the mean out of sample (−43% to −69%), a negative result.
+* The survey-anchored premium stays the headline: it is the better estimate
+  of what investors expected (Kim–Wright, the model-free survey premium);
+  docs/results.md explains why that is a different question from what bonds
+  then earned.
+
+### Fixed
+* Website on phones: display equations, long inline maths and inline code no
+  longer widen the page, and the dashboard's charts move their legends under
+  the plot, wrap their titles and zoom the 3-D surface out below 520 px. The
+  dashboard page has full link-preview tags. The landing page shows the
+  install command with a copy button.
 
 ## 2.4.0 — survey-anchored term premium by default, breakeven inflation, website
 

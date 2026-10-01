@@ -50,12 +50,23 @@ offset. Starting the same model in 1990 instead adds about 65 bp: that, not
 the code, is why plain ACM on 1990–2026 data sits a point above Kim–Wright.
 
 **"A term premium is an expected return. Does yours predict returns?"**
-This is the 2.5 study; see docs/results.md, "Do term premia predict bond
-returns?", for the latest numbers. Short version: plain ACM's premium has a
-little out-of-sample power for 10-year bond returns, the survey-anchored one,
-which matches Kim–Wright best, has none, because the surveys kept expecting
-rate rises that did not come. The Cochrane–Piazzesi factor, famous in sample,
-does far worse than the historical mean out of sample.
+Tested in 2.5 (docs/results.md, "Do term premia predict bond returns?").
+For one-year returns on the 10-year bond, 2000–2025, forecasts made in real
+time: plain ACM's premium beats the historical mean (R² OOS 8.8%, Clark–West
+p = 0.005), as does the Fama–Bliss forward spread (7.6%, p = 0.017), in both
+halves of the sample. The survey-anchored one, which matches Kim–Wright best,
+does not: it expected bonds to lose to bills (−0.2% a year) while they beat
+them by 2.5% a year, because the SPF kept forecasting rate rises that never
+came (too high 65–76% of the time; the ten-year forecast too high in all 16
+surveys checked). That is Cieslak's (2018) point about bond "risk premia".
+Cochrane–Piazzesi explains 22% in sample and loses badly out of sample.
+
+**"So which term premium is right?"**
+They answer different questions. The survey-anchored one is the better
+estimate of what investors expected (it agrees with Kim–Wright and with a
+model-free survey premium); plain ACM's is the better predictor of what bonds
+then earned over 2000–2025, partly because the fall in rates it learned from
+the 1990s kept going. Neither is a trading signal with 25 independent years of data.
 
 **"Did you try the bias-corrected VAR (Bauer–Rudebusch–Wu)?"**
 Yes, analytic and bootstrap. On real data it barely moves the level (RMSE vs

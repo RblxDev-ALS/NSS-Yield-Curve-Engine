@@ -711,6 +711,10 @@ that; a bias-corrected version made it worse.</li>
 <li>Splitting the slope into expected rates and term premium predicted
 recessions <i>worse</i> than the plain slope since 2005. The 2022-24 inversion pushed the real-time
 model to 90% and no recession has followed so far.</li>
+<li>The survey-anchored term premium, the one closest to the Fed Board's, did not predict what
+bonds went on to earn: forecasters kept expecting rate rises that never came, so it expected
+bonds to lose to bills while they beat them. A famous bond-return predictor (Cochrane-Piazzesi)
+did far worse than the plain historical average once re-estimated in real time.</li>
 <li>Version 2.2 said the arbitrage-free model had better-calibrated
 forecast intervals. A proper coverage test showed they are too wide, and the claim was withdrawn.</li>
 </ul>

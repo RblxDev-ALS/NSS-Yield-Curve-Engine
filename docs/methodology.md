@@ -636,7 +636,11 @@ The New York Fed publishes ACM's own estimates (`data.load_acm_term_premium`),
 from the model estimated on the Fed's GSW curve since 1961. Running this
 package's implementation on the same curve and sample checks the code; running
 it on this engine's curves since 1990 shows how much the curve and the sample
-change the answer.
+change the answer. On the Fed's curve since 1961 the two move one for one
+(correlation 1.000, 12-month changes 0.999) with a constant 20 bp offset in
+the split; from 1990 the same code averages 1.72% instead of 0.86%, so the
+sample start, not the curve, explains most of plain ACM's gap to Kim–Wright
+([results](results.md#checked-against-the-new-york-feds-own-acm-series)).
 
 ## 7. Real yields and breakeven inflation
 
@@ -740,6 +744,7 @@ maturities, and nothing below five years is quoted or reported.
 * Beaton, A. & Tukey, J. (1974). The fitting of power series, meaning polynomials, illustrated on band-spectroscopic data. *Technometrics*.
 * Campbell, J. & Thompson, S. (2008). Predicting excess stock returns out of sample: can anything beat the historical average? *Review of Financial Studies*.
 * Christensen, J., Diebold, F. & Rudebusch, G. (2011). The affine arbitrage-free class of Nelson–Siegel term structure models. *Journal of Econometrics*.
+* Cieslak, A. (2018). Short-rate expectations and unexpected returns in Treasury bonds. *Review of Financial Studies*.
 * Clark, T. & West, K. (2007). Approximately normal tests for equal predictive accuracy in nested models. *Journal of Econometrics*.
 * Cochrane, J. & Piazzesi, M. (2005). Bond risk premia. *American Economic Review*.
 * Diebold, F. & Li, C. (2006). Forecasting the term structure of government bond yields. *Journal of Econometrics*.

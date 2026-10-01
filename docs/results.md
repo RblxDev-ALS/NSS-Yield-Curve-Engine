@@ -8,7 +8,8 @@ benchmark scripts named in each section and can be rerun offline. Negative
 results are reported next to the positive ones.
 
 Contents: [fitting the curve](#fitting-the-curve) ·
-[term premium](#term-premium) · [recessions](#recessions) ·
+[term premium](#term-premium) ·
+[bond returns](#do-term-premia-predict-bond-returns) · [recessions](#recessions) ·
 [breakeven inflation](#breakeven-inflation) · [forecasting](#forecasting) ·
 [other findings](#other-findings)
 
@@ -209,6 +210,70 @@ to a lower level than they started at, so it reads more of the 1990s' yields as
 premium. Surveys bring the level down to Kim–Wright's, but the models still
 disagree about the moves: 12-month changes in the published ACM series
 correlate 0.72 with Kim–Wright's and 0.45 with the survey-anchored series.
+
+## Do term premia predict bond returns?
+
+New in 2.5. A term premium is the extra return investors *expect* for holding
+a long bond instead of rolling over bills, so it can be scored against the
+returns bonds then earned. The test: one-year excess returns over one-year
+bills on 2-, 5- and 10-year zero-coupon bonds (this engine's curves), against
+forecasts made at the start of each year with data available then, from
+November 2000 to September 2025 (299 monthly forecast origins, overlapping, so
+about 25 independent years). The benchmark is the historical average return.
+R² OOS above zero beats it; Clark–West p-values are one-sided; the slope of
+realized on forecast returns is 1 for a calibrated forecast
+([methodology §6.2](methodology.md#62-does-the-premium-predict-returns)).
+
+| 10-year bond | R² OOS | 2000–13 | 2013–25 | Clark–West p | slope (s.e.) | mean forecast |
+|---|---:|---:|---:|---:|---:|---:|
+| **plain ACM's 10-year premium, regression** | **+8.8%** | +16.5% | +3.7% | **0.005** | 0.74 (0.31) | 4.6% |
+| **Fama–Bliss forward spread** | **+7.6%** | +5.0% | +9.4% | **0.017** | 1.02 (0.50) | 4.3% |
+| plain ACM's expected return, as is | +2.1% | −18.5% | +15.7% | 0.032 | 0.54 (0.45) | 0.8% |
+| Kim–Wright premium, regression | −3.5% | −39.9% | +20.6% | 0.023 | 0.42 (0.49) | 0.1% |
+| survey-anchored premium, regression | −2.2% | −23.4% | +11.8% | 0.059 | −0.07 (0.46) | 1.8% |
+| survey-anchored expected return, as is | −44.1% | −101.6% | −6.2% | 0.22 | −0.18 (0.24) | −0.2% |
+| Cochrane–Piazzesi factor | −43.4% | −132.9% | +15.7% | 0.18 | −0.27 (0.24) | −0.4% |
+
+The 10-year bond returned 2.5% a year more than bills on average over these
+years. At 2 and 5 years the picture is similar but weaker: plain ACM's expected
+return beats the average for the 2-year bond (+7.5%, p = 0.03) and Fama–Bliss
+for the 5-year (+4.3%, p = 0.06); the survey-anchored and Cochrane–Piazzesi
+forecasts lose at every maturity. Almost everything loses in 2000–13 and
+gains in 2013–25; only the two forecasts in bold beat the average for the
+10-year bond in both halves.
+
+**The survey-anchored premium fails this test, and the reason is the
+surveys.** It expected bonds to *lose* to bills (−0.2% a year) over a period
+when they beat them by 0.3–2.5% a year. The Philadelphia Fed's forecasters
+kept expecting higher short rates than came:
+
+| SPF bill-rate forecasts, 2000–2025 | about 4 months ahead | 1 year | 1½ years | 3½ years | 10 years |
+|---|---:|---:|---:|---:|---:|
+| mean error (forecast − realized) | +0.13 pp | +0.42 pp | +0.45 pp | +0.62 pp | +2.22 pp |
+| share too high | 69% | 65% | 70% | 76% | 16 of 16 |
+
+A model anchored to these forecasts expected rates to rise and bond prices to
+fall, so its expected returns were low exactly when bonds did well. This is
+Cieslak's (2018) point: much of what looks like a predictable bond risk
+premium is the gap between the rates forecasters expected and the rates that
+came. The two scores answer different questions. Agreement with Kim–Wright
+and with the survey premium (above) asks whether the estimate matches what
+investors expected; this test asks whether that expectation was right. Over
+2000–2025, it was not.
+
+**Cochrane–Piazzesi is a negative result out of sample.** The single factor
+built from five forward rates explains 21–27% of the variance of excess
+returns in sample (look-ahead included), the most of any predictor here, and
+is the worst out of sample. Re-estimated each month on past data it does far
+worse than the historical average, mainly in 2000–13, as Thornton & Valente
+(2012) found for an earlier sample. The in-sample R² of plain ACM's expected
+return is similar (21–24%) and also shrinks out of sample.
+
+Caveats: about 25 independent years, one long fall in rates and its reversal;
+the Clark–West test with overlapping returns rejects a little too often (13%
+at a nominal 10% in a small simulation with an irrelevant predictor); and Kim–Wright's
+parameters are estimated on the full sample, so its row is not strictly real
+time.
 
 ## Recessions
 
