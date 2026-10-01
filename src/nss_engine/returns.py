@@ -422,3 +422,39 @@ def evaluate_return_forecasts(
         mean_forecast=float(f.mean()),
         mean_realized=float(y.mean()),
     )
+
+
+# =============================================================================
+# Were the surveys right?
+# =============================================================================
+
+
+def survey_forecast_errors(surveys: pd.DataFrame, bill_rate: pd.Series) -> pd.DataFrame:
+    """Survey forecasts of the bill rate against the rate that followed.
+
+    ``surveys`` is in the format of
+    :func:`~nss_engine.data.load_spf_bill_forecasts`: each row forecasts, at
+    month ``date``, the average 3-month rate over months ``start … end``
+    ahead. ``bill_rate`` is the realized 3-month rate, monthly, in the same
+    units (continuously compounded percent, e.g. the 3-month column of a
+    zero panel). Returns the surveys whose window has passed, with
+    ``realized`` and ``error`` (forecast − realized; positive = the survey
+    expected higher rates than came). Survey-anchored expectations inherit
+    these errors.
+    """
+    months = pd.DatetimeIndex(bill_rate.index).to_period("M")
+    rate = pd.Series(bill_rate.to_numpy(dtype=float), index=months)
+    rate = rate[~rate.index.duplicated(keep="last")]
+    rows = []
+    for r in surveys.itertuples(index=False):
+        origin = pd.Timestamp(r.date).to_period("M")
+        window = pd.period_range(origin + int(r.start), origin + int(r.end), freq="M")
+        if window[-1] > rate.index[-1] or window[0] < rate.index[0]:
+            continue
+        realized = rate.reindex(window)
+        if realized.isna().any():
+            continue
+        rows.append((r.date, r.series, r.start, r.end, r.value, float(realized.mean())))
+    out = pd.DataFrame(rows, columns=["date", "series", "start", "end", "value", "realized"])
+    out["error"] = out["value"] - out["realized"]
+    return out

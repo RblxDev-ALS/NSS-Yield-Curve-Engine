@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.5.0 — do term premia predict bond returns? ACM checked against the New York Fed
+
+### Added
+* **Do term premia predict bond returns?** (`nss_engine.returns`). A term
+  premium is an expected excess return, so it can be scored against the
+  excess returns bonds went on to earn: realized one-year returns on 2-, 5-
+  and 10-year zero-coupon bonds (`excess_returns`), the returns the ACM model
+  expects (`ACMResult.expected_excess_returns`), the same re-estimated each
+  month on past data (`real_time_expected_returns`), and real-time Fama–Bliss
+  and Cochrane–Piazzesi regressions. Forecasts are scored against the
+  historical mean with the out-of-sample R², Clark–West tests and
+  Mincer–Zarnowitz slopes, all with Newey–West variances for overlapping
+  returns. Real-data study in `benchmarks/real_data_studies.py`; known-truth
+  study in `benchmarks/return_predictability_known_truth.py`.
+* **The New York Fed's published ACM term premium**
+  (`data.load_acm_term_premium`; the `.xls` file needs `xlrd`, now in the
+  `[surveys]` extra). The pipeline and dashboard show it next to Kim–Wright,
+  and a study runs this package's ACM code on the Fed's curve since 1961, as
+  ACM do, to check the implementation against the published series.
+* **Releases from the browser**: *Actions → Release → Run workflow* on `main`
+  tags `v<version>`, uploads to PyPI and creates the GitHub release
+  ([docs/releasing.md](docs/releasing.md)).
+* `scripts/preflight.py`: checks PyPI, the website and its link preview, the
+  freshness of the data, README links, the author name and the GitHub About
+  box before the project is posted (`--offline` for the repository checks).
+* Package metadata: an author on PyPI, `py.typed` and the `Typing :: Typed`
+  classifier. A test checks that `pyproject.toml`, `CITATION.cff` and the
+  website name the same author.
+* The tour notebook compares the 10-year bond's realized excess returns with
+  the model's expected ones.
+
+### Results on FRED data
+(to be filled from the live run)
+
 ## 2.4.0 — survey-anchored term premium by default, breakeven inflation, website
 
 ### Changed (affects results)

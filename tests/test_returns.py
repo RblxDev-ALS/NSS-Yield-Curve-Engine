@@ -131,3 +131,21 @@ def test_gaps_in_the_monthly_panel_are_refused():
         ret.excess_returns(zeros)
     with pytest.raises(ValueError):
         ret.forward_spot_spread(_flat_panel(months=60), 120)
+
+
+def test_survey_forecast_errors():
+    idx = pd.date_range("2000-01-31", periods=36, freq="ME")
+    bill = pd.Series(np.arange(36, dtype=float) / 10, index=idx)  # rates rise 0.1 a month
+    surveys = pd.DataFrame(
+        {
+            "date": [idx[0], idx[0], idx[33]],
+            "series": ["TBILL4", "BILL10", "TBILL4"],
+            "start": [2, 1, 2],
+            "end": [4, 120, 4],
+            "value": [0.0, 1.0, 5.0],
+        }
+    )
+    out = ret.survey_forecast_errors(surveys, bill)
+    assert len(out) == 1  # the ten-year and the latest windows have not passed yet
+    assert out["realized"].iloc[0] == pytest.approx(0.3)  # months 2-4 after January 2000
+    assert out["error"].iloc[0] == pytest.approx(-0.3)  # the survey expected no rise

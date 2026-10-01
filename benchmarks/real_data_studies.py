@@ -449,6 +449,22 @@ def return_predictability_study(
         insample[f"{n // 12}Y"] = row
     print("\nIn-sample R² for comparison (estimated on the whole sample, so with look-ahead):\n")
     print(pd.DataFrame(insample).round(3).to_markdown())
+    if spf is not None:
+        errors = bond_returns.survey_forecast_errors(spf, nss[nss.columns[2]])  # 3-month rate
+        errors = errors[errors["date"] >= first - pd.DateOffset(months=1)]
+        if len(errors):
+            by = errors.groupby("series").agg(
+                surveys=("error", "size"),
+                mean_error_pp=("error", "mean"),
+                share_too_high=("error", lambda e: float((e > 0).mean())),
+                months_ahead=("end", "mean"),
+            )
+            print(
+                "\nSPF bill-rate forecasts made over the same period against the 3-month rate "
+                "that followed (error = forecast − realized, pp; positive = expected higher "
+                "rates than came):\n"
+            )
+            print(by.sort_values("months_ahead").to_markdown(floatfmt=".2f"))
     print(f"\n({time.perf_counter() - t0:.0f} s)")
 
 
