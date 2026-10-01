@@ -1,10 +1,12 @@
-# Runs the full pipeline on real U.S. Treasury data from FRED.
+# Runs the full pipeline on real U.S. Treasury data from FRED and builds the website.
 #
-# * Every run (any branch) writes the Markdown report to the job summary and uploads all
-#   outputs (CSV, JSON, report, dashboard) as a build artifact.
-# * To publish the dashboard to GitHub Pages, enable Pages with source
-#   "GitHub Actions" (Settings -> Pages) and add the repository variable
-#   DEPLOY_PAGES = true (Settings -> Secrets and variables -> Actions -> Variables).
+# * Every run (any branch) writes the Markdown report and the real-data studies to the
+#   job summary and uploads the site (dashboard, charts, CSV, JSON, report) as an artifact.
+# * Pushes to main and the weekday schedule publish the site to GitHub Pages when Pages
+#   uses "GitHub Actions" as its source (Settings -> Pages) and the repository variable
+#   DEPLOY_PAGES is true (Settings -> Secrets and variables -> Actions -> Variables).
+# * Run it by hand (Actions -> Live dashboard -> Run workflow) with "commit charts" ticked
+#   to copy the freshly drawn README charts into docs/img on the chosen branch.
 name: Live dashboard
 
 on:
@@ -12,37 +14,42 @@ on:
   schedule:
     - cron: "17 22 * * 1-5" # weekday evenings (UTC), after FRED updates the H.15 data
   workflow_dispatch:
+    inputs:
+      commit_charts:
+        description: "Commit the new README charts (docs/img) to this branch"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: live-dashboard
+  # one run per branch: a push to one branch no longer cancels another branch's run
+  group: live-dashboard-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .
+      - run: pip install -e ".[surveys,figures]" markdown tabulate
       - name: Run pipeline on FRED data
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: |
-          nss-engine run --source fred --start 1990-01-01 --out site
-          cp site/dashboard.html site/index.html
+        run: nss-engine run --source fred --start 1990-01-01 --out site --figures
+      - name: Build the website (landing page, documents)
+        run: python website/build.py site
       - name: Publish report to job summary
         run: |
           cat site/report.md >> "$GITHUB_STEP_SUMMARY"
           cat site/report.md
-      - name: Real-data studies (cross-validation, forecasts, Fed curve, state-space)
+      - name: Real-data studies (cross-validation, forecasts, Fed curve, term premium, recessions, breakevens, state-space)
         run: |
-          pip install tabulate
           python benchmarks/real_data_studies.py --source fred | tee site/studies.md
           { echo; echo "---"; echo; cat site/studies.md; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -53,6 +60,33 @@ jobs:
         if: vars.DEPLOY_PAGES == 'true'
         with:
           path: site/
+
+  charts:
+    # README charts are drawn from real data by this workflow, never by hand
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.commit_charts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: nss-output
+          path: site/
+      - name: Commit the charts to docs/img
+        run: |
+          mkdir -p docs/img
+          cp site/img/{curve,term_premium,recession}*.png docs/img/  # not the social card
+          git add docs/img
+          if git diff --cached --quiet; then
+            echo "charts unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Charts from the live run on $(date -u +%Y-%m-%d)"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
   deploy:
     needs: build

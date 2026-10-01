@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 from collections.abc import Callable
@@ -12,7 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from . import analytics, forecasting, regime, statespace
+from . import analytics, forecasting, inflation, regime, statespace, termpremium
 from .calibration import (
     DEFAULT_PANEL_SMOOTHING,
     CalibrationConfig,
@@ -24,14 +25,19 @@ from .calibration import (
 from .data import (
     DataError,
     label_columns,
+    load_breakevens,
     load_gsw_parameters,
+    load_gsw_tips_parameters,
+    load_kim_wright_term_premium,
     load_recession_indicator,
+    load_spf_bill_forecasts,
+    load_tips_yields,
     load_treasury_yields,
     load_yields_csv,
     maturity_label,
 )
 from .models import NSSCurve, curvature_peak
-from .synthetic import simulate_market
+from .synthetic import simulate_market, simulate_tips_market
 from .validation import ReferenceComparison, compare_to_reference
 
 #: Standard tenors reported in risk / carry tables.
@@ -64,6 +70,19 @@ class PipelineConfig:
     run_forecasts: bool = True
     #: Compare with the Fed's GSW curve (FRED source) or the true curve (synthetic).
     reference_curve: bool = True
+    #: Split yields into expected short rates and a term premium (ACM model).
+    term_premium: bool = True
+    #: Months of data before the first pseudo-real-time term premium estimate.
+    term_premium_min_train: int = 60
+    #: Anchor the term premium's expectations to SPF survey forecasts (FRED source).
+    #: When the surveys are available this is the headline estimate; plain ACM is
+    #: reported next to it.
+    term_premium_surveys: bool = True
+    #: Also re-estimate the survey-anchored premium every month on past data (about
+    #: three minutes on 1990-2026 data); the recession test then uses it.
+    term_premium_real_time_surveys: bool = True
+    #: Fit the TIPS real curve and derive breakeven inflation (FRED and synthetic sources).
+    inflation: bool = True
 
 
 @dataclass
@@ -92,11 +111,48 @@ class PipelineResult:
     dns_forecast: pd.DataFrame | None = None
     reference: ReferenceComparison | None = None
     reference_name: str | None = None
+    acm: termpremium.ACMResult | None = None
+    #: The same model with expectations anchored to SPF surveys (FRED source only).
+    acm_survey: termpremium.ACMResult | None = None
+    #: Pseudo-real-time 10-year decomposition (each month estimated on past data only).
+    term_premium_real_time: pd.DataFrame | None = None
+    #: The same with survey anchors (each month using only surveys published by then).
+    term_premium_real_time_survey: pd.DataFrame | None = None
+    #: Other estimates of the 10-year term premium (Kim-Wright, ACM on the Fed's curve).
+    term_premium_benchmarks: dict[str, pd.Series] = field(default_factory=dict)
+    term_premium_comparison: pd.DataFrame | None = None
+    #: Recession probits on the expectations and term-premium parts of the spread.
+    term_premium_recession: pd.DataFrame | None = None
+    #: Pseudo-real-time recession probabilities by signal (monthly, 12 months ahead).
+    recession_real_time: pd.DataFrame | None = None
+    #: Real (TIPS) curve fits.
+    real_fit: PanelFit | None = None
+    #: Breakeven inflation from the nominal and real curves (see :mod:`.inflation`).
+    breakevens: pd.DataFrame | None = None
+    #: Other breakeven measures: FRED's, the Fed's GSW curves, or the truth (synthetic).
+    breakeven_benchmarks: pd.DataFrame | None = None
+    breakeven_comparison: pd.DataFrame | None = None
     summary: dict[str, Any] = field(default_factory=dict)
 
     @property
     def as_of(self) -> pd.Timestamp:
         return pd.Timestamp(self.fit.params.index[-1])
+
+    @property
+    def headline_acm(self) -> termpremium.ACMResult | None:
+        """The headline term-premium model: survey-anchored when surveys were available."""
+        return self.acm_survey if self.acm_survey is not None else self.acm
+
+    @property
+    def term_premium_method(self) -> str:
+        return "survey-anchored ACM" if self.acm_survey is not None else "ACM"
+
+    @property
+    def headline_real_time(self) -> pd.DataFrame | None:
+        """Real-time 10-year decomposition of the headline model (plain ACM as fallback)."""
+        if self.acm_survey is not None and self.term_premium_real_time_survey is not None:
+            return self.term_premium_real_time_survey
+        return self.term_premium_real_time
 
 
 def load_data(cfg: PipelineConfig) -> tuple[pd.DataFrame, pd.Series | None, pd.DataFrame | None]:
@@ -142,6 +198,7 @@ def run_pipeline(
     latest_fit = _refit_latest(yields, fit, cfg.calibration)
 
     reference, reference_name = None, None
+    ref_params = None
     if cfg.reference_curve:
         ref_params, reference_name = _reference_params(cfg, true_params)
         if ref_params is not None:
@@ -177,6 +234,7 @@ def run_pipeline(
     rec_model = None
     lead_times = None
     rec_comparison = None
+    rec_rt = None
     if recession is not None and recession.sum() > 0:
         say("fitting recession probit")
         try:
@@ -199,6 +257,29 @@ def run_pipeline(
         except ValueError:
             rec_comparison = None
         lead_times = regime.inversion_lead_times(regime.to_monthly(spreads["slope"]), recession)
+        rec_rt = _recession_real_time(spreads, recession, cfg)
+
+    # ---- term premium ---------------------------------------------------------------
+    acm, acm_survey, tp_rt, tp_rt_sv, tp_cmp, tp_rec = None, None, None, None, None, None
+    tp_bench: dict[str, pd.Series] = {}
+    if cfg.term_premium:
+        say("decomposing yields into expected short rates and term premium (ACM)")
+        gsw = ref_params if cfg.source == "fred" and true_params is None else None
+        acm, acm_survey, tp_rt, tp_rt_sv, tp_bench, tp_cmp = _term_premium(fit, cfg, gsw, say)
+        headline_rt = tp_rt_sv if acm_survey is not None and tp_rt_sv is not None else tp_rt
+        if (
+            acm is not None
+            and headline_rt is not None
+            and recession is not None
+            and recession.sum() > 0
+        ):
+            say("testing the expectations and term-premium parts of the spread as predictors")
+            tp_rec = _term_premium_recession(spreads["slope"], headline_rt, recession, cfg)
+
+    # ---- real yields and breakeven inflation ---------------------------------------------
+    real_fit, be, be_bench, be_cmp = None, None, None, None
+    if cfg.inflation:
+        real_fit, be, be_bench, be_cmp = _inflation(fit, cfg, true_params, ref_params, say)
 
     # ---- factor validation --------------------------------------------------------
     say("validating factors (PCA)")
@@ -269,6 +350,18 @@ def run_pipeline(
         dns_forecast=dns_forecast,
         reference=reference,
         reference_name=reference_name if reference is not None else None,
+        acm=acm,
+        term_premium_real_time=tp_rt,
+        acm_survey=acm_survey,
+        term_premium_benchmarks=tp_bench,
+        term_premium_comparison=tp_cmp,
+        term_premium_recession=tp_rec,
+        term_premium_real_time_survey=tp_rt_sv,
+        recession_real_time=rec_rt,
+        real_fit=real_fit,
+        breakevens=be,
+        breakeven_benchmarks=be_bench,
+        breakeven_comparison=be_cmp,
     )
     result.summary = build_summary(result)
     say("done")
@@ -297,6 +390,190 @@ def _fit_dns(
         index=pd.Index([maturity_label(float(m)) for m in monthly.columns], name="tenor"),
     )
     return dns, table
+
+
+def _term_premium(
+    fit: PanelFit,
+    cfg: PipelineConfig,
+    gsw: pd.DataFrame | None,
+    say: Callable[[str], None] = lambda _msg: None,
+) -> tuple[
+    termpremium.ACMResult | None,
+    termpremium.ACMResult | None,
+    pd.DataFrame | None,
+    pd.DataFrame | None,
+    dict[str, pd.Series],
+    pd.DataFrame | None,
+]:
+    """ACM decomposition of the fitted curves, plain and survey-anchored, in real time
+    too, plus benchmarks."""
+    zeros = termpremium.zero_panel(fit.params)
+    try:
+        acm = termpremium.fit_acm(zeros)
+    except (ValueError, np.linalg.LinAlgError):
+        return None, None, None, None, {}, None
+    acm_survey, surveys = None, None
+    if cfg.source == "fred" and cfg.term_premium_surveys:
+        with contextlib.suppress(DataError, ImportError, ValueError, np.linalg.LinAlgError):
+            surveys = load_spf_bill_forecasts(end=cfg.end)
+            acm_survey = termpremium.fit_acm(zeros, surveys=surveys)
+    tp_rt, tp_rt_sv = None, None
+    if len(zeros) > cfg.term_premium_min_train + 12:
+        tp_rt = termpremium.real_time_decomposition(zeros, 10.0, cfg.term_premium_min_train)
+        if acm_survey is not None and cfg.term_premium_real_time_surveys:
+            say("re-estimating the survey-anchored term premium month by month (real time)")
+            with contextlib.suppress(ValueError, np.linalg.LinAlgError):
+                tp_rt_sv = termpremium.real_time_decomposition(
+                    zeros, 10.0, cfg.term_premium_min_train, surveys=surveys
+                )
+    bench: dict[str, pd.Series] = {}
+    if cfg.source == "fred":
+        with contextlib.suppress(DataError):
+            bench["Kim-Wright (Fed Board)"] = load_kim_wright_term_premium(cfg.start, cfg.end)
+    if gsw is not None:
+        try:
+            gsw_acm = termpremium.fit_acm(termpremium.zero_panel(gsw.loc[fit.params.index[0] :]))
+            bench["ACM on the Fed's GSW curve"] = gsw_acm.decomposition(10)["term_premium"]
+        except (ValueError, np.linalg.LinAlgError):
+            pass
+    estimates = {"ACM on NSS curves (full sample)": acm.decomposition(10)["term_premium"]}
+    if acm_survey is not None:
+        estimates["ACM + SPF surveys (full sample)"] = acm_survey.decomposition(10)["term_premium"]
+    if tp_rt is not None:
+        estimates["ACM on NSS curves (real time)"] = tp_rt["term_premium"]
+    if tp_rt_sv is not None:
+        estimates["ACM + SPF surveys (real time)"] = tp_rt_sv["term_premium"]
+    rows = {}
+    for b_name, b in bench.items():
+        for e_name, e in estimates.items():
+            try:
+                rows[(e_name, b_name)] = termpremium.compare_term_premia(e, b)
+            except ValueError:
+                continue
+    cmp = None
+    if rows:
+        cmp = pd.DataFrame(rows).T
+        cmp.index.names = ["estimate", "benchmark"]
+    return acm, acm_survey, tp_rt, tp_rt_sv, bench, cmp
+
+
+def _recession_real_time(
+    spreads: pd.DataFrame, recession: pd.Series, cfg: PipelineConfig
+) -> pd.DataFrame | None:
+    """Pseudo-real-time recession probabilities of the two single-signal probits."""
+    out = {}
+    for name, col in (
+        (f"{_spread_label(cfg)} spread", "slope"),
+        ("near-term forward spread", "near_term_fwd"),
+    ):
+        with contextlib.suppress(ValueError):
+            out[name] = regime.real_time_probabilities(
+                spreads[col], recession, cfg.recession_horizon
+            )
+    return pd.DataFrame(out) if out else None
+
+
+def _inflation(
+    fit: PanelFit,
+    cfg: PipelineConfig,
+    true_params: pd.DataFrame | None,
+    ref_params: pd.DataFrame | None,
+    say: Callable[[str], None],
+) -> tuple[PanelFit | None, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
+    """Fit the TIPS real curve; breakevens and their comparison with other measures."""
+    bench: pd.DataFrame | None = None
+    if cfg.source == "synthetic" and true_params is not None:
+        try:
+            tips = simulate_tips_market(true_params, seed=cfg.seed)
+        except ValueError:  # sample ends before TIPS exist
+            return None, None, None, None
+        real = tips.yields
+        bench = tips.true_breakevens().add_prefix("true ")
+    elif cfg.source == "fred":
+        start = max(pd.Timestamp(cfg.start or "2003-01-01"), pd.Timestamp("2003-01-01"))
+        try:
+            real = load_tips_yields(start, cfg.end, freq=cfg.freq)
+        except DataError:
+            return None, None, None, None
+    else:
+        return None, None, None, None
+    if len(real) < 2:
+        return None, None, None, None
+    say(f"fitting the TIPS real curve on {len(real)} dates; breakeven inflation")
+    real_fit = inflation.fit_real_curve(real)
+    be = inflation.breakevens(fit.params, real_fit.params)
+    if be.empty:
+        return real_fit, None, None, None
+    if cfg.source == "fred":
+        frames = []
+        with contextlib.suppress(DataError):
+            fred = load_breakevens(be.index[0], cfg.end)
+            frames.append(fred.rename(columns=lambda c: f"FRED {c}"))
+        if ref_params is not None:
+            with contextlib.suppress(DataError, ValueError):
+                gsw_real = load_gsw_tips_parameters(be.index[0], cfg.end)
+                gsw_be = inflation.breakevens(ref_params, gsw_real)
+                frames.append(gsw_be[["be_5y", "be_10y", "be_5y5y"]].add_prefix("Fed GSW "))
+        bench = pd.concat(frames, axis=1) if frames else None
+    cmp = _breakeven_comparison(be, bench) if bench is not None else None
+    return real_fit, be, bench, cmp
+
+
+#: Which engine column each benchmark column measures.
+_BREAKEVEN_PAIRS = {
+    "FRED T5YIE": "be_par_5y",
+    "FRED T10YIE": "be_par_10y",
+    "FRED T5YIFR": "be_5y5y",
+    "Fed GSW be_5y": "be_5y",
+    "Fed GSW be_10y": "be_10y",
+    "Fed GSW be_5y5y": "be_5y5y",
+    "true be_5y": "be_5y",
+    "true be_10y": "be_10y",
+    "true be_5y5y": "be_5y5y",
+}
+
+
+def _breakeven_comparison(be: pd.DataFrame, bench: pd.DataFrame) -> pd.DataFrame | None:
+    rows = {}
+    for b_col, e_col in _BREAKEVEN_PAIRS.items():
+        if b_col in bench and e_col in be:
+            with contextlib.suppress(ValueError):
+                rows[(e_col, b_col)] = inflation.compare_series(be[e_col], bench[b_col])
+    if not rows:
+        return None
+    out = pd.DataFrame(rows).T
+    out.index.names = ["engine", "benchmark"]
+    return out
+
+
+def _term_premium_recession(
+    slope: pd.Series, tp_rt: pd.DataFrame, recession: pd.Series, cfg: PipelineConfig
+) -> pd.DataFrame | None:
+    """Probits on the spread, its expectations component and the term premium alone.
+
+    The 10-year term premium estimated in real time is subtracted from the
+    10y−3m spread; what is left is the part of the slope explained by expected
+    short rates (Rosenberg & Maurer, 2008). All candidates are scored on the
+    same origins, which start later than the main comparison because the
+    real-time premium needs its own training window.
+    """
+    monthly = regime.to_monthly(slope)
+    tp = tp_rt["term_premium"].copy()
+    tp.index = pd.DatetimeIndex(tp.index).to_period("M").to_timestamp("M")
+    monthly.index = pd.DatetimeIndex(monthly.index).to_period("M").to_timestamp("M")
+    frame = pd.concat([monthly.rename("spread"), tp.rename("tp")], axis=1).dropna()
+    try:
+        return regime.compare_recession_predictors(
+            {
+                f"{_spread_label(cfg)} spread": frame["spread"],
+                "expectations component": frame["spread"] - frame["tp"],
+                "term premium": frame["tp"],
+            },
+            recession,
+            cfg.recession_horizon,
+        )
+    except ValueError:
+        return None
 
 
 def _spread_label(cfg: PipelineConfig) -> str:
@@ -440,6 +717,80 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
     if r.forecast_eval is not None:
         rel = r.forecast_eval.relative_rmse
         s["forecast_relative_rmse"] = {f"h={h}": rel.loc[h].to_dict() for h in rel.index}
+    if r.acm is not None:
+        head = r.headline_acm
+        assert head is not None
+        rt = r.headline_real_time
+        tp = head.decomposition(10)["term_premium"]
+        s["term_premium"] = {
+            "model": (
+                "Adrian-Crump-Moench (2013), 5 principal components, real-world dynamics "
+                "anchored to SPF surveys"
+                if r.acm_survey is not None
+                else "Adrian-Crump-Moench (2013), 5 principal components"
+            ),
+            "method": r.term_premium_method,
+            "maturity_years": 10,
+            "latest": head.decomposition(10).iloc[-1].to_dict(),
+            "latest_real_time": _latest_real_time(rt),
+            "real_time_share_var_capped": float(rt["var_capped"].mean())
+            if rt is not None
+            else None,
+            "real_time_months_discarded": int(rt["fitted"].isna().sum())
+            if rt is not None
+            else None,
+            "mean": float(tp.mean()),
+            "min": float(tp.min()),
+            "min_date": tp.idxmin(),
+            "max": float(tp.max()),
+            "max_date": tp.idxmax(),
+            "fit_rmse_bp_mean": float(head.fit_rmse_bp.mean()),
+            "var_max_eigenvalue": head.max_eigenvalue,
+        }
+        plain = r.acm.decomposition(10)
+        s["term_premium"]["plain_acm"] = {
+            "latest": plain.iloc[-1].to_dict(),
+            "latest_real_time": _latest_real_time(r.term_premium_real_time),
+            "mean": float(plain["term_premium"].mean()),
+            "var_max_eigenvalue": r.acm.max_eigenvalue,
+        }
+        if r.acm_survey is not None:
+            s["term_premium"]["survey_anchored"] = {
+                "latest": r.acm_survey.decomposition(10).iloc[-1].to_dict(),
+                "latest_real_time": _latest_real_time(r.term_premium_real_time_survey),
+                "mean": float(r.acm_survey.decomposition(10)["term_premium"].mean()),
+                "survey_rmse_pp": r.acm_survey.survey_rmse.to_dict(),
+                "n_surveys": len(r.acm_survey.survey_fit)
+                if r.acm_survey.survey_fit is not None
+                else 0,
+            }
+        if r.term_premium_comparison is not None:
+            s["term_premium"]["benchmarks"] = {
+                f"{e} vs {b}": row.to_dict() for (e, b), row in r.term_premium_comparison.iterrows()
+            }
+    if r.term_premium_recession is not None:
+        s["term_premium_recession_predictors"] = r.term_premium_recession.to_dict(orient="index")
+        s["term_premium_recession_method"] = r.term_premium_method
+    if r.recession_real_time is not None:
+        s["recession_real_time_latest"] = r.recession_real_time.iloc[-1].to_dict()
+    if r.breakevens is not None and r.real_fit is not None:
+        be = r.breakevens
+        s["inflation"] = {
+            "as_of": be.index[-1],
+            "latest": be.iloc[-1].to_dict(),
+            "sample_start": be.index[0],
+            "n_curves": len(be),
+            "real_fit_rmse_bp_median": r.real_fit.diagnostics["rmse_bp"].median(),
+            "real_fit_model": "Nelson-Siegel (4-5 TIPS quotes)",
+            "be_5y5y_min": float(be["be_5y5y"].min()),
+            "be_5y5y_min_date": be["be_5y5y"].idxmin(),
+            "be_5y5y_max": float(be["be_5y5y"].max()),
+            "be_5y5y_max_date": be["be_5y5y"].idxmax(),
+        }
+        if r.breakeven_comparison is not None:
+            s["inflation"]["benchmarks"] = {
+                f"{e} vs {b}": row.to_dict() for (e, b), row in r.breakeven_comparison.iterrows()
+            }
     if r.true_params is not None:
         s["synthetic_truth"] = _truth_errors(r)
     if r.config.calibration.robust and r.fit.outliers is not None:
@@ -460,6 +811,13 @@ def build_summary(r: PipelineResult) -> dict[str, Any]:
             "bias_bp": r.reference.summary()["bias_bp"].to_dict(),
         }
     return _clean(s)
+
+
+def _latest_real_time(rt: pd.DataFrame | None) -> dict[str, float] | None:
+    if rt is None:
+        return None
+    last = rt.drop(columns="var_capped").dropna()
+    return last.iloc[-1].astype(float).to_dict() if not last.empty else None
 
 
 def _share_at_bounds(fit: PanelFit) -> dict[str, float]:
@@ -495,6 +853,53 @@ def _truth_errors(r: PipelineResult) -> dict[str, float]:
     return {"curve_rmse_vs_truth_bp": float(np.sqrt(np.mean((est - true) ** 2)) * 100)}
 
 
+def badges(result: PipelineResult) -> dict[str, dict[str, Any]]:
+    """Live-status badges in the shields.io *endpoint* format.
+
+    Published with the dashboard, they let a README show the latest reading,
+    e.g. ``https://img.shields.io/endpoint?url=<site>/badges/regime.json``.
+    """
+    s = result.summary
+    regime_colors = {"Inverted": "red", "Flat": "orange", "Normal": "blue", "Steep": "blue"}
+    out: dict[str, dict[str, Any]] = {
+        "regime": {
+            "label": f"curve ({s['regime']['slope_definition'].replace(' ', '')})",
+            "message": f"{s['regime']['current']} {result.spreads['slope'].iloc[-1]:+.2f}pp",
+            "color": regime_colors.get(s["regime"]["current"], "lightgrey"),
+        },
+        "as_of": {"label": "data as of", "message": str(s["as_of"]), "color": "informational"},
+    }
+    if "recession_model" in s:
+        p = s["recession_model"]["latest_probability"]
+        out["recession"] = {
+            "label": f"recession odds {s['recession_model']['horizon_months']}m",
+            "message": f"{p:.0%}",
+            "color": "red" if p >= 0.4 else "orange" if p >= 0.2 else "green",
+        }
+    if "term_premium" in s:
+        tp = s["term_premium"]["latest"]["term_premium"]
+        out["term_premium"] = {
+            "label": "10Y term premium",
+            "message": f"{tp:+.2f}%",
+            "color": "informational",
+        }
+    if "inflation" in s:
+        be = s["inflation"]["latest"]
+        out["breakeven"] = {
+            "label": "10Y breakeven",
+            "message": f"{be['be_10y']:.2f}%",
+            "color": "informational",
+        }
+        out["breakeven_5y5y"] = {
+            "label": "5y5y breakeven",
+            "message": f"{be['be_5y5y']:.2f}%",
+            "color": "informational",
+        }
+    for badge in out.values():
+        badge["schemaVersion"] = 1
+    return out
+
+
 def write_outputs(
     result: PipelineResult, out_dir: str | Path, dashboard: bool = True, offline: bool = False
 ) -> dict[str, Path]:
@@ -526,6 +931,9 @@ def write_outputs(
         signals = signals.join(
             prob.reindex(signals.index, method="ffill").rename("recession_prob_12m"), how="left"
         )
+    if result.recession_real_time is not None:
+        rt = result.recession_real_time.add_prefix("real-time recession prob, ")
+        signals = signals.join(rt.reindex(signals.index, method="ffill"), how="left")
     paths["signals"] = out / "macro_signals.csv"
     signals.to_csv(paths["signals"], float_format="%.4f")
 
@@ -533,15 +941,48 @@ def write_outputs(
         paths["outliers"] = out / "outliers.csv"
         label_columns(result.fit.outliers.astype(int)).to_csv(paths["outliers"])
 
+    if result.acm is not None:
+        dec = result.acm.decomposition(10)
+        if result.term_premium_real_time is not None:
+            rt = result.term_premium_real_time.add_suffix("_real_time")
+            dec = dec.join(rt, how="left")
+        if result.acm_survey is not None:
+            sv = result.acm_survey.decomposition(10)[["expected_short_rate", "term_premium"]]
+            dec = dec.join(sv.add_suffix("_survey"), how="left")
+        if result.term_premium_real_time_survey is not None:
+            rts = result.term_premium_real_time_survey[["expected_short_rate", "term_premium"]]
+            dec = dec.join(rts.add_suffix("_survey_real_time"), how="left")
+        paths["term_premium"] = out / "term_premium.csv"
+        dec.to_csv(paths["term_premium"], float_format="%.4f")
+
+    if result.breakevens is not None:
+        be = result.breakevens
+        if result.breakeven_benchmarks is not None:
+            bench = result.breakeven_benchmarks.reindex(
+                be.index, method="ffill", tolerance=pd.Timedelta(days=4)
+            )
+            be = be.join(bench)
+        paths["breakevens"] = out / "breakevens.csv"
+        be.to_csv(paths["breakevens"], float_format="%.4f")
+    if result.real_fit is not None:
+        paths["real_parameters"] = out / "tips_nss_parameters.csv"
+        result.real_fit.to_frame().to_csv(paths["real_parameters"], float_format="%.6f")
+
     if result.reference is not None:
         paths["reference"] = out / "reference_comparison.csv"
         result.reference.summary().to_csv(paths["reference"], float_format="%.3f")
 
     paths["summary"] = out / "summary.json"
-    paths["summary"].write_text(json.dumps(result.summary, indent=2, default=str))
+    paths["summary"].write_text(json.dumps(result.summary, indent=2, default=str), encoding="utf-8")
+
+    badge_dir = out / "badges"
+    badge_dir.mkdir(exist_ok=True)
+    for name, badge in badges(result).items():
+        paths[f"badge_{name}"] = badge_dir / f"{name}.json"
+        paths[f"badge_{name}"].write_text(json.dumps(badge), encoding="utf-8")
 
     paths["report"] = out / "report.md"
-    paths["report"].write_text(render_markdown(result))
+    paths["report"].write_text(render_markdown(result), encoding="utf-8")
 
     if dashboard:
         from .viz import build_dashboard

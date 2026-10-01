@@ -9,7 +9,10 @@ forecasting the *curve* reduces to forecasting three well-behaved time series::
 This module implements that model and an honest, rolling out-of-sample
 evaluation against the random walk ("no change") - the benchmark that is
 notoriously hard to beat in yield forecasting - including Diebold-Mariano
-tests of equal predictive accuracy.
+tests of equal predictive accuracy. It also scores the equal-weight average of
+the model and the random walk: a combination with no estimated weights, so it
+cannot overfit, and it gains whenever the two make partly offsetting errors
+(Bates & Granger, 1969; Timmermann, 2006).
 """
 
 from __future__ import annotations
@@ -114,29 +117,51 @@ class ForecastEvaluation:
     dm_pvalue: pd.DataFrame  #: two-sided p-value (Harvey-Leybourne-Newbold corrected)
     n_forecasts: pd.Series
     kind: str
+    rmse_combination: pd.DataFrame | None = None  #: RMSE (bp) of ½ model + ½ random walk
 
     @property
     def relative_rmse(self) -> pd.DataFrame:
         """Model RMSE / random-walk RMSE (< 1 means the model wins)."""
         return self.rmse_model / self.rmse_random_walk
 
+    @property
+    def relative_rmse_combination(self) -> pd.DataFrame:
+        """Equal-weight combination RMSE / random-walk RMSE."""
+        if self.rmse_combination is None:
+            raise ValueError("no combination forecasts were evaluated")
+        return self.rmse_combination / self.rmse_random_walk
+
 
 def diebold_mariano(e_model: FloatArray, e_bench: FloatArray, h: int) -> tuple[float, float]:
     """Diebold-Mariano (1995) test with the Harvey, Leybourne & Newbold (1997) correction.
 
-    Loss differential ``d = e_model² − e_bench²``; its long-run variance uses a
-    rectangular window of ``h − 1`` lags (errors of h-step forecasts are MA(h−1)).
+    Loss differential ``d = e_model² − e_bench²``; see :func:`diebold_mariano_loss`.
     """
     d = np.asarray(e_model, dtype=float) ** 2 - np.asarray(e_bench, dtype=float) ** 2
+    return diebold_mariano_loss(d, h)
+
+
+def diebold_mariano_loss(d: FloatArray, h: int) -> tuple[float, float]:
+    """DM/HLN test that a loss differential ``d`` (model − benchmark) has mean zero.
+
+    The long-run variance uses a rectangular window of ``h − 1`` lags (errors of
+    h-step forecasts are MA(h−1)); if that estimate is not positive, as can
+    happen in small samples, the Bartlett (Newey-West) window of the same
+    length is used instead. Returns the statistic (negative = model more
+    accurate) and a two-sided p-value from Student's t with ``n − 1`` degrees
+    of freedom.
+    """
+    d = np.asarray(d, dtype=float)
     d = d[np.isfinite(d)]
     n = d.size
     if n < max(10, 2 * h):
         return float("nan"), float("nan")
     d_bar = d.mean()
     dc = d - d_bar
-    lrv = np.dot(dc, dc) / n
-    for lag in range(1, h):
-        lrv += 2.0 * np.dot(dc[lag:], dc[:-lag]) / n
+    gamma = [np.dot(dc[lag:], dc[: n - lag]) / n for lag in range(h)]
+    lrv = gamma[0] + 2.0 * sum(gamma[1:])
+    if lrv <= 0:
+        lrv = gamma[0] + 2.0 * sum((1 - lag / h) * gamma[lag] for lag in range(1, h))
     if lrv <= 0:
         return float("nan"), float("nan")
     dm = d_bar / np.sqrt(lrv / n)
@@ -144,6 +169,59 @@ def diebold_mariano(e_model: FloatArray, e_bench: FloatArray, h: int) -> tuple[f
     stat = float(dm * hln)
     pval = float(2 * stats.t.sf(abs(stat), df=n - 1))
     return stat, pval
+
+
+def compare_forecasts(errors_a: pd.DataFrame, errors_b: pd.DataFrame, h: int) -> dict[str, float]:
+    """Is forecast A more accurate than B? Pooled over tenors, with a DM test.
+
+    ``errors_*`` hold forecast errors (bp) with one row per forecast origin and
+    one column per tenor; only origins and tenors both have are compared. The
+    loss is the squared error averaged over tenors at each origin, so the test
+    asks whether A beats B on the curve as a whole. Returns ``rmse_a``,
+    ``rmse_b``, their ratio, the DM statistic and p-value, and the number of
+    origins.
+    """
+    a, b = errors_a.align(errors_b, join="inner")
+    both = a.notna() & b.notna()
+    la = (a.where(both) ** 2).mean(axis=1)
+    lb = (b.where(both) ** 2).mean(axis=1)
+    keep = la.notna() & lb.notna()
+    la, lb = la[keep], lb[keep]
+    stat, pval = diebold_mariano_loss((la - lb).to_numpy(), h)
+    rmse_a, rmse_b = float(np.sqrt(la.mean())), float(np.sqrt(lb.mean()))
+    return {
+        "rmse_a": rmse_a,
+        "rmse_b": rmse_b,
+        "ratio": rmse_a / rmse_b,
+        "dm_stat": stat,
+        "p_value": pval,
+        "n": float(keep.sum()),
+    }
+
+
+def hac_mean_test(x: FloatArray, value: float = 0.0, lags: int | None = None) -> dict[str, float]:
+    """Mean of a serially correlated series, with a Newey-West standard error.
+
+    Tests ``mean(x) = value``; ``lags`` defaults to ``⌊4 (n/100)^{2/9}⌋``.
+    Used for interval coverage (``x`` = share of outcomes inside the interval
+    at each origin, ``value`` = nominal coverage) and differences in coverage.
+    """
+    x = np.asarray(x, dtype=float)
+    x = x[np.isfinite(x)]
+    n = x.size
+    if n < 10:
+        nan = float("nan")
+        return {"mean": float(x.mean()) if n else nan, "se": nan, "t": nan, "p_value": nan}
+    if lags is None:
+        lags = int(4 * (n / 100.0) ** (2.0 / 9.0))
+    xc = x - x.mean()
+    lrv = np.dot(xc, xc) / n
+    for lag in range(1, min(lags, n - 1) + 1):
+        lrv += 2.0 * (1 - lag / (lags + 1)) * np.dot(xc[lag:], xc[:-lag]) / n
+    se = float(np.sqrt(max(lrv, 0.0) / n))
+    t = (float(x.mean()) - value) / se if se > 0 else float("nan")
+    p = float(2 * stats.norm.sf(abs(t))) if np.isfinite(t) else float("nan")
+    return {"mean": float(x.mean()), "se": se, "t": t, "p_value": p}
 
 
 def evaluate_forecasts(
@@ -190,6 +268,11 @@ def evaluate_forecasts(
 
     rm = pd.DataFrame([rmse(err_m[h]) for h in horizons], index=list(horizons), columns=labels)
     rr = pd.DataFrame([rmse(err_rw[h]) for h in horizons], index=list(horizons), columns=labels)
+    rc = pd.DataFrame(
+        [rmse(combination_errors(err_m[h], err_rw[h])) for h in horizons],
+        index=list(horizons),
+        columns=labels,
+    )
     dm_s = pd.DataFrame(index=list(horizons), columns=labels, dtype=float)
     dm_p = pd.DataFrame(index=list(horizons), columns=labels, dtype=float)
     for h in horizons:
@@ -199,7 +282,17 @@ def evaluate_forecasts(
         for j, lab in enumerate(labels):
             m = np.isfinite(em[:, j]) & np.isfinite(er[:, j])
             dm_s.loc[h, lab], dm_p.loc[h, lab] = diebold_mariano(em[m, j], er[m, j], h)
-    for frame in (rm, rr, dm_s, dm_p):
+    for frame in (rm, rr, rc, dm_s, dm_p):
         frame.index.name = "horizon"
     n = pd.Series({h: len(err_m[h]) for h in horizons}, name="n_forecasts")
-    return ForecastEvaluation(rm, rr, dm_s, dm_p, n, kind)
+    return ForecastEvaluation(rm, rr, dm_s, dm_p, n, kind, rc)
+
+
+def combination_errors(
+    err_model: list[FloatArray], err_random_walk: list[FloatArray]
+) -> list[FloatArray]:
+    """Errors of the forecast ``½ model + ½ random walk``.
+
+    ``y − (ŷ + y_t)/2 = (e_model + e_rw)/2``, so no forecasts need storing.
+    """
+    return [(a + b) / 2.0 for a, b in zip(err_model, err_random_walk, strict=True)]

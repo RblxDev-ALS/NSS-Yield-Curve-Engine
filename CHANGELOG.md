@@ -1,5 +1,191 @@
 # Changelog
 
+## 2.4.0 — survey-anchored term premium by default, breakeven inflation, website
+
+### Changed (affects results)
+* **The survey-anchored term premium is the headline estimate** whenever the
+  SPF surveys can be downloaded: in the pipeline, report, dashboard, badges
+  and CLI. Plain ACM is reported next to it (`summary["term_premium"]["plain_acm"]`).
+  On FRED data the survey-anchored premium is closer to Kim–Wright (RMSE 28 bp
+  vs 123 bp), to a model-free survey premium (correlation 0.89 vs 0.80) and,
+  estimated in real time, to its own full-sample series (0.91–0.94 vs
+  0.43–0.70); see 2.3.0 below and [docs/results.md](docs/results.md).
+* The pipeline also re-estimates the survey-anchored premium every month on
+  past data (`term_premium_real_time_survey`, about three minutes on FRED data;
+  `--fast` skips it), and the recession test of the expectations component
+  and the term premium (Rosenberg & Maurer) uses that series.
+* The AFNS forecast-interval claim is reversed (see 2.3.0 below).
+
+### Added
+* **Real yields and breakeven inflation** (`nss_engine.inflation`): the TIPS
+  real curve (FRED `DFII5`–`DFII30`, Nelson–Siegel on par yields), zero-coupon
+  breakevens, the 5y5y forward breakeven and par breakevens, compared with
+  FRED's `T5YIE`, `T10YIE`, `T5YIFR` and with the Fed's TIPS curve
+  (`data.load_gsw_tips_parameters`, Gürkaynak, Sack & Wright 2010). Dashboard
+  section, report section, `breakevens.csv`, `tips_nss_parameters.csv`, two
+  badges, `--no-inflation`.
+* **Known-truth test for breakevens** (`synthetic.simulate_tips_market`,
+  `benchmarks/breakeven_known_truth.py`). Over 4 simulated markets the
+  engine's 5Y / 10Y / 5y5y breakevens miss the truth by 3.1 / 3.6 / 7.8 bp
+  with 3 bp quote noise, against 5.4 / 5.3 / 10.2 bp for FRED's formulas on the
+  same quotes; without noise 0.5 / 0.3 / 0.6 bp against 3.2 / 3.1 / 3.5 bp.
+* **Real-time recession probabilities up to today**
+  (`regime.real_time_probabilities`), in the dashboard and `macro_signals.csv`.
+* **Charts for the README** (`nss_engine.figures`, `nss-engine run --figures`,
+  `pip install "nss-engine[figures]"`): the curve since 1990, the real-time
+  term premium (plain vs survey-anchored vs Kim–Wright) and recession
+  probabilities, in light and dark versions, drawn from FRED data by the live
+  workflow.
+* **Project website** (`website/build.py`): a landing page that states the
+  latest reading in words and as a table with year-on-year changes and
+  five-year sparklines, the three charts, what did not work, and the
+  project's history; the dashboard with the site's navigation; and the
+  results, methodology, research note and changelog as HTML with a contents
+  list. A favicon, a 404 page and a preview image with the latest numbers
+  (`img/social.png`) for links shared on social sites and in chats.
+  Published to GitHub Pages from `main`.
+* Real-data studies: the recession split test with plain and survey-anchored
+  real-time premia (also with NBER dates known only 12 months late), and a
+  breakeven study against FRED and the Fed's TIPS curve.
+
+### Results on FRED data
+* **Breakevens** (weekly, July 2004 – September 2026): the real curve fits the
+  TIPS quotes to 1.15 bp (median). Against the Fed's own zero-coupon
+  breakevens the engine's 10-year and 5y5y breakevens have RMSE 8.2 and
+  20.4 bp, FRED's `T10YIE` and `T5YIFR` 10.6 and 26.9 bp (the latter 9 bp too
+  low on average); at 5 years FRED is slightly closer (12.2 vs 13.8 bp).
+* **Recessions, expectations vs term premium** (a negative result): with the
+  survey-anchored real-time split, the expectations component predicts
+  recessions *worse* than the 10Y−3M spread out of sample (AUC 0.13 vs 0.45,
+  90% interval on the difference [−0.54, −0.02], 238 months from 2005); no
+  curve signal beats a coin flip in that window. Rosenberg & Maurer's result
+  is not confirmed.
+* Latest reading (24 September 2026): 10Y zero yield 5.18% = 4.02% expected
+  short rate + 1.16% term premium (survey-anchored; plain ACM 1.91%); 10-year
+  breakeven 2.33%, 5y5y 2.35%, 10-year real yield 2.85%.
+* `docs/results.md` collects the detailed results; the README is shorter.
+* MIT license metadata in the package.
+
+### Fixed
+* The live workflow's runs on different branches no longer cancel each other.
+
+## 2.3.0 — survey-anchored term premium, significance tests, PyPI
+
+### Added
+* **Survey-anchored term premium** (`fit_acm(surveys=...)`): the real-world
+  dynamics are estimated jointly from the pricing factors and the Survey of
+  Professional Forecasters' 3-month bill forecasts (1–4 quarters, 1–3 calendar
+  years and 10 years ahead), as Kim & Wright and Kim & Orphanides discipline
+  expectations with surveys. The cross-section, and so the fitted yields, is
+  unchanged; only the split into expectations and premium moves.
+  `data.load_spf_bill_forecasts` downloads and caches the Philadelphia Fed's
+  files (`pip install nss-engine[surveys]` for `openpyxl`).
+* **Bias-corrected VAR** (`fit_acm(bias_correction="analytic" | "bootstrap")`):
+  Pope's closed-form small-sample bias, or Bauer, Rudebusch & Wu's inverse
+  bootstrap, each shrunk to stationarity as in Kilian (1998).
+* **Known-truth test** of all four estimators
+  (`benchmarks/term_premium_known_truth.py`): `simulate_affine_market` now
+  stores its true dynamics, simulates SPF-style surveys, and takes a
+  `level_persistence`.
+* **Diebold–Mariano tests between forecasts** (`forecasting.compare_forecasts`,
+  pooled over tenors) and Newey–West tests of interval coverage
+  (`forecasting.hac_mean_test`); the state-space evaluation keeps every
+  forecast error (`DNSForecastEvaluation.errors`).
+* **PyPI release workflow** (trusted publishing on a `v*` tag, with a build
+  check on every packaging change) and [docs/releasing.md](docs/releasing.md).
+
+### Results on FRED data (1990–2026)
+* Survey-anchored 10-year premium: mean 0.76%, correlation 0.95 with
+  Kim–Wright (12-month changes 0.82), RMSE 28 bp, mean gap −7 bp. Plain ACM:
+  mean 1.83%, correlation 0.96 (changes 0.75), RMSE 123 bp, gap +101 bp.
+  Bias correction lowers the RMSE only to 113 bp (analytic) or 117 bp
+  (bootstrap) and worsens the 12-month changes (0.46, 0.37).
+* Against a model-free survey premium (10Y zero yield minus the SPF 10-year
+  bill forecast, 35 first quarters): correlation 0.89 survey-anchored, 0.83
+  Kim–Wright, 0.80 plain ACM.
+* In real time (first estimate after 5 / 10 / 15 years) the survey-anchored
+  premium correlates 0.94 / 0.91 / 0.92 with its own full-sample series and
+  0.94 / 0.91 / 0.85 with Kim–Wright (plain ACM: 0.43 / 0.58 / 0.70 and
+  0.24 / 0.38 / 0.49); RMSE vs Kim–Wright 45–50 bp against 101–112 bp.
+  Real-time bias correction is a negative result: agreement with Kim–Wright
+  falls to 0.00–0.45 and the stationarity cap binds in 63–92% of months.
+* Known truth (8 simulated markets, level persistence 0.99): real-time RMSE
+  82 bp plain, 81 / 84 bp bias-corrected, 13 bp with surveys, 53 bp with
+  surveys biased by +0.5 pp.
+* Diebold–Mariano: AFNS beats the state-space VAR at 1 month (p = 0.014), not
+  at 6 or 12; both lose to the random walk at 1 month (p < 0.001); the
+  ½ model + ½ random walk combinations tie the random walk at 6 and 12 months
+  (p ≥ 0.49).
+* Coverage of 80% intervals: AFNS (93 / 89 / 86%) is significantly too wide
+  at every horizon; the state-space VAR (86 / 79 / 73%) only at 1 month. 2.2's
+  "AFNS has far better calibrated intervals" was wrong and is withdrawn.
+
+### Fixed
+* `simulate_affine_market(level_persistence=0.99)` would have made the level
+  and slope load identically on every yield, leaving part of the state
+  invisible to any yield-based model; the risk-neutral dynamics no longer
+  depend on the real-world persistence.
+
+## 2.2.0 — term premium, arbitrage-free dynamics, easier to use
+
+### Added
+* **Term premium** (`termpremium.fit_acm`): the Adrian, Crump & Moench (2013)
+  regression-based affine model on the NSS zero curves splits each yield into
+  the average expected short rate and a term premium. On FRED data the 10-year
+  premium tracks the same model run on the Fed's GSW curve with correlation 0.99
+  (RMSE 31 bp) and Kim–Wright with correlation 0.96, about a point higher on
+  average. Report section, dashboard chart and tile, `term_premium.csv`,
+  `--no-term-premium`.
+* **Pseudo-real-time term premium** (`real_time_decomposition`), re-estimated
+  every month on past data only, and recession probits on the expectations and
+  term-premium parts of the 10y−3m spread. On FRED data the real-time
+  premium is noisy (correlation 0.43 with the full-sample estimate after a
+  5-year start, 0.70 after 15), and on the 2006–2026 origins no curve signal
+  beats a coin flip out of sample.
+* **Arbitrage-free Nelson–Siegel** in the state-space model
+  (`fit_dns(arbitrage_free=True)`, Christensen, Diebold & Rudebusch 2011): the
+  yield-adjustment term for any factor covariance, tied to the state shocks, so
+  the restriction adds no parameters; `independent=True` for CDR's diagonal
+  specification. On FRED data AFNS has the best one-month forecast of any
+  single model (1.073 of the random walk's RMSE) and far better calibrated
+  12-month intervals (86% coverage for 80%, against 73%), but still does not
+  beat the random walk; independent factors are the worst specification.
+* **A market with a known term premium** (`synthetic.simulate_affine_market`)
+  for testing: the ACM estimator recovers its risk-neutral dynamics exactly.
+* `data.load_kim_wright_term_premium` (FRED `THREEFYTP1`–`10`).
+* **Colab notebook** (`examples/tour.ipynb`), **live status badges** in
+  shields.io endpoint format next to the dashboard, and `CITATION.cff`.
+
+### Fixed
+* `DNSResult.n_params` counted restricted entries (a diagonal `A`, a
+  random-walk level) as free parameters, overstating the BIC penalty.
+
+## 2.1.0 — honest error bars, forecast combination, long-end guard
+
+### Changed (affects results)
+* **The second NSS hump stays inside the data** (`hump_within_data=True`). The
+  lower bound on λ2 becomes 1.7933/τmax for the longest *observed* maturity τmax,
+  so the hump cannot peak where the curve is only extrapolating. With every
+  tenor quoted this is the old bound and fits are bit-for-bit unchanged. On FRED
+  data the 30Y leave-one-out error moves from 23.36 to 23.30 bp: correct in
+  principle, negligible in practice.
+
+### Added
+* **Confidence interval on the recession-signal comparison.** Each signal's
+  out-of-sample AUC gain over 10y−3m gets a 90% moving-block bootstrap
+  interval (`regime.block_bootstrap_auc_difference`). On FRED data the
+  near-term forward spread's +0.099 gain has the interval [−0.035, +0.205],
+  so 2.0's "clearly better" was overstated; the README now says so.
+* **Equal-weight forecast combination** (½ model + ½ random walk), scored in
+  both forecast evaluations (`relative_rmse_combination`). On FRED data it
+  gives the project's first ratios below 1 (0.990 at 6 months, 0.996 at 12 for
+  the state-space model): a tie with the random walk, not a significant win.
+* `ReferenceComparison.subset()`; real-data studies report the fixed-bound
+  variant and the months without a 30-year quote.
+
+### Fixed
+* A docstring pointed to a benchmark file that does not exist.
+
 ## 2.0.0 — par-yield fitting, validation against the Fed, state-space model
 
 ### Changed (affects results)
