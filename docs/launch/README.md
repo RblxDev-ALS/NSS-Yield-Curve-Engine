@@ -16,9 +16,14 @@
 1. Merge to `main`, wait for the live workflow to deploy the site, and check
    that the README badges, charts and the site's link preview work (paste
    the site URL into a Discord or Slack message to see the preview card).
-2. Release 2.4.0 to PyPI so `pip install nss-engine` works
-   (docs/releasing.md).
-3. Re-read each draft against the latest live run and update any number
+2. Release 2.5.0 to PyPI so `pip install nss-engine` works: once the PyPI
+   publisher and the `pypi` environment are set up (docs/releasing.md), it is
+   *Actions → Release → Run workflow* on `main` with *publish* ticked.
+3. Check before posting: run `python scripts/preflight.py` (`--offline` skips
+   the network checks). It checks PyPI, the site and its link preview, data
+   freshness, the README links, the author name and the GitHub About box, and
+   prints a fix hint for every WARN or FAIL. Fix every FAIL.
+4. Re-read each draft against the latest live run and update any number
    that moved. Every number must be in the README, docs/results.md or the
    run's job summary.
 

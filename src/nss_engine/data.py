@@ -378,6 +378,147 @@ def load_kim_wright_term_premium(
 
 
 # =============================================================================
+# Adrian-Crump-Moench term premium (Federal Reserve Bank of New York)
+# =============================================================================
+
+#: The New York Fed's published ACM estimates (yields, expected short rates and
+#: term premia, 1 to 10 years). The file has been an ``.xls`` workbook for
+#: years; the ``.xlsx`` name is tried too in case it is converted.
+ACM_URLS = (
+    "https://www.newyorkfed.org/medialibrary/media/research/data_indicators/ACMTermPremium.xls",
+    "https://www.newyorkfed.org/medialibrary/media/research/data_indicators/ACMTermPremium.xlsx",
+)
+
+
+def parse_acm_frame(df: pd.DataFrame, maturity: int = 10) -> pd.DataFrame:
+    """The New York Fed's ACM series for one maturity from its spreadsheet.
+
+    Expects a ``DATE`` column and the columns ``ACMY{nn}`` (fitted yield),
+    ``ACMRNY{nn}`` (risk-neutral yield, the average expected short rate) and
+    ``ACMTP{nn}`` (term premium), percent, with ``nn`` the maturity in years
+    (``01`` … ``10``). Returns them as ``yield``, ``expected_short_rate`` and
+    ``term_premium`` on a sorted ``DatetimeIndex``.
+    """
+    cols = {str(c).strip().upper(): c for c in df.columns}
+    if "DATE" not in cols:
+        raise DataError("ACM file lacks a DATE column")
+    nn = f"{maturity:02d}"
+    names = {
+        f"ACMY{nn}": "yield",
+        f"ACMRNY{nn}": "expected_short_rate",
+        f"ACMTP{nn}": "term_premium",
+    }
+    if f"ACMTP{nn}" not in cols:
+        raise DataError(f"ACM file lacks ACMTP{nn}")
+    dates = _parse_dates(df[cols["DATE"]])
+    out = pd.DataFrame(
+        {
+            new: pd.to_numeric(df[cols[old]], errors="coerce")
+            for old, new in names.items()
+            if old in cols
+        }
+    )
+    out.index = pd.DatetimeIndex(dates, name="date")
+    out = out[out.index.notna()].sort_index().dropna(how="all")
+    if out.empty:
+        raise DataError("no dated values in the ACM file")
+    return out
+
+
+def _parse_dates(values: pd.Series) -> pd.Series:
+    """Dates from a spreadsheet column: datetimes, Excel serial numbers or text.
+
+    Text is tried against whole-column formats first (``02-Jan-1962``, ISO,
+    U.S. ``01/02/1962``) so that day and month are never guessed row by row.
+    """
+    if pd.api.types.is_datetime64_any_dtype(values):
+        return pd.Series(pd.to_datetime(values), index=values.index)
+    if pd.api.types.is_numeric_dtype(values):
+        return pd.Series(
+            pd.to_datetime(values, unit="D", origin="1899-12-30", errors="coerce"),
+            index=values.index,
+        )
+    text = values.astype(str).str.strip()
+    for fmt in ("%d-%b-%Y", "%Y-%m-%d", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S"):
+        parsed = pd.to_datetime(text, format=fmt, errors="coerce")
+        if parsed.notna().mean() > 0.95:
+            return parsed
+    return pd.to_datetime(text, format="mixed", errors="coerce")
+
+
+def load_acm_term_premium(
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    maturity: int = 10,
+    *,
+    cache_dir: Path | str | None = None,
+    max_age_hours: float = 24.0 * 7,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """Adrian, Crump & Moench (2013) term premium as published by the New York Fed.
+
+    The original model, estimated by its authors on the Fed's
+    Gürkaynak-Sack-Wright zero curve since 1961; :mod:`nss_engine.termpremium`
+    reimplements it, so this is a check of that implementation as well as a
+    second benchmark next to Kim-Wright. Returns ``yield``,
+    ``expected_short_rate`` and ``term_premium`` (percent) for ``maturity``
+    years (1-10). Reading the ``.xls`` workbook needs ``xlrd``
+    (``pip install "nss-engine[surveys]"``).
+    """
+    if not 1 <= maturity <= 10:
+        raise ValueError("ACM term premia exist for maturities 1 to 10 years")
+    cache = Path(cache_dir) if cache_dir is not None else default_cache_dir()
+    path = cache / "acm_term_premium.csv"
+    fresh = path.exists() and (time.time() - path.stat().st_mtime) / 3600.0 <= max_age_hours
+    if fresh and not refresh:
+        raw = pd.read_csv(path)
+    else:
+        try:
+            raw = _download_acm()
+        except DataError:
+            if not path.exists():
+                raise
+            import warnings
+
+            warnings.warn(
+                f"ACM download failed; using stale cache {path}", RuntimeWarning, stacklevel=2
+            )
+            raw = pd.read_csv(path)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            raw.to_csv(path, index=False)
+    return parse_acm_frame(raw, maturity).loc[slice(start, end)]
+
+
+def _download_acm() -> pd.DataFrame:
+    errors = []
+    for url in ACM_URLS:
+        try:
+            content = _http_get_bytes(url, timeout=120.0)
+        except DataError as exc:
+            errors.append(str(exc))
+            continue
+        try:
+            sheets = pd.read_excel(io.BytesIO(content), sheet_name=None)
+        except ImportError as exc:
+            raise DataError("reading the ACM file needs xlrd: pip install xlrd") from exc
+        except Exception as exc:  # pragma: no cover - many possible parser errors
+            errors.append(f"could not parse {url}: {exc}")
+            continue
+        # prefer the daily sheet (the longest); any sheet with a DATE column works
+        usable = [
+            df for df in sheets.values() if "DATE" in {str(c).strip().upper() for c in df.columns}
+        ]
+        if usable:
+            df = max(usable, key=len)
+            date_col = next(c for c in df.columns if str(c).strip().upper() == "DATE")
+            df[date_col] = _parse_dates(df[date_col]).dt.strftime("%Y-%m-%d")
+            return df
+        errors.append(f"no sheet with a DATE column in {url}")
+    raise DataError("; ".join(errors))
+
+
+# =============================================================================
 # Survey of Professional Forecasters (Federal Reserve Bank of Philadelphia)
 # =============================================================================
 

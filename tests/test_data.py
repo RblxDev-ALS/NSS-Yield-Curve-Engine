@@ -326,3 +326,56 @@ def test_load_gsw_tips_parameters(monkeypatch, tmp_path):
     p = data.load_gsw_tips_parameters(cache_dir=tmp_path)
     assert p["lambda1"].iloc[0] == pytest.approx(0.5)
     assert p["lambda2"].iloc[0] == pytest.approx(0.1)
+
+
+def test_parse_acm_frame_and_download(tmp_path, monkeypatch):
+    pytest.importorskip("openpyxl")
+    import io
+
+    raw = pd.DataFrame(
+        {
+            "DATE": ["02-Jan-1962", "03-Jan-1962", "31-Dec-2025"],
+            "ACMY10": [4.1, 4.2, 4.5],
+            "ACMTP10": [0.5, 0.6, 0.7],
+            "ACMRNY10": [3.6, 3.6, 3.8],
+            "ACMTP02": [0.1, 0.1, 0.2],
+        }
+    )
+    out = data.parse_acm_frame(raw)
+    assert list(out.columns) == ["yield", "expected_short_rate", "term_premium"]
+    assert out.index[0] == pd.Timestamp("1962-01-02") and out["term_premium"].iloc[-1] == 0.7
+    assert list(data.parse_acm_frame(raw, 2).columns) == ["term_premium"]
+    with pytest.raises(DataError):
+        data.parse_acm_frame(raw, 5)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf) as xl:
+        pd.DataFrame({"note": ["read me"]}).to_excel(xl, sheet_name="Notes", index=False)
+        raw.iloc[[2]].to_excel(xl, sheet_name="ACM Monthly", index=False)
+        raw.to_excel(xl, sheet_name="ACM Daily", index=False)
+    calls = []
+
+    def fake(url, **kwargs):
+        calls.append(url)
+        if url.endswith(".xls"):
+            raise DataError("404")
+        return buf.getvalue()
+
+    monkeypatch.setattr(data, "_http_get_bytes", fake)
+    got = data.load_acm_term_premium(cache_dir=tmp_path)
+    assert len(calls) == 2 and len(got) == 3  # the daily sheet, after the .xls failed
+    pd.testing.assert_frame_equal(got, out, check_freq=False)
+    cached = data.load_acm_term_premium(cache_dir=tmp_path, start="1970")
+    assert len(calls) == 2 and len(cached) == 1  # dates survive the CSV cache unchanged
+    with pytest.raises(ValueError):
+        data.load_acm_term_premium(maturity=11)
+
+
+def test_acm_dates_are_never_guessed_row_by_row():
+    raw = pd.DataFrame({"DATE": ["01/02/2020", "01/13/2020"], "ACMTP10": [1.0, 2.0]})
+    out = data.parse_acm_frame(raw)  # U.S. month/day, read as such for every row
+    assert list(out.index) == [pd.Timestamp("2020-01-02"), pd.Timestamp("2020-01-13")]
+    serial = pd.DataFrame({"DATE": [43831.0, 43832.0], "ACMTP10": [1.0, 2.0]})
+    assert data.parse_acm_frame(serial).index[0] == pd.Timestamp("2020-01-01")
+    with pytest.raises(DataError):
+        data.parse_acm_frame(pd.DataFrame({"DATE": ["n/a"], "ACMTP10": [1.0]}))

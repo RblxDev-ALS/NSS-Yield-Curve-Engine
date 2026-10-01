@@ -586,6 +586,62 @@ its own full-sample estimate (0.58–0.92) but moves it *away* from Kim–Wright
 (correlation 0.00–0.45), and the stationarity cap binds in 63–92% of months,
 so the corrected VAR is mostly the cap.
 
+### 6.2 Does the premium predict returns?
+
+A term premium is an *expected* excess return, so it can be checked against
+the excess returns bonds actually earned. With zero yields in percent, the
+one-year log excess return on an $n$-month zero bought at $t$ is
+
+$$rx_{t+12}(n) = \tfrac{n}{12}\,y_t(n) - \tfrac{n-12}{12}\,y_{t+12}(n-12) - y_t(12),$$
+
+stored at the formation date $t$ (`returns.excess_returns`). In the affine
+model the return expected at $t$ follows from the real-world dynamics and the
+risk-neutral price loadings:
+
+$$E_t[rx_{t+12}(n)] = A_{n-12} + B_{n-12}^\top E_t[X_{t+12}] - (A_n + B_n^\top X_t) + (A_{12} + B_{12}^\top X_t),\qquad
+E_t[X_{t+12}] = \textstyle\sum_{j<12}\Phi^j\mu + \Phi^{12}X_t$$
+
+(`ACMResult.expected_excess_returns`). Without prices of risk it is only a
+convexity term (under 5 bp in the tests); on a simulated market with known
+premia, realized returns regress on the true expected return with slope 1.
+The 10-year term premium is, roughly, the average of such expected returns
+over the bond's life.
+
+Every forecast is made in pseudo-real time and may use only returns completed
+by then, those formed twelve months earlier or before:
+
+* **ACM, model's expected return**: the model re-estimated each month on past
+  data (`returns.real_time_expected_returns`), plain or survey-anchored, used
+  as it is, with no regression on returns;
+* **regressions on the model's expected return or on the 10-year premium**,
+  re-estimated each month on completed returns;
+* **Fama & Bliss (1987)**: the forward rate from $n-12$ to $n$ months minus the
+  one-year yield;
+* **Cochrane & Piazzesi (2005)**: the average excess return on 2–5 year bonds
+  regressed on the five one-year forward rates gives a single "tent-shaped"
+  factor, and each bond's return is regressed on that factor, both re-estimated
+  each month;
+* the **expanding historical mean**, the benchmark.
+
+Scores: the out-of-sample $R^2_{OS} = 1 - \sum(rx - \hat{rx})^2 / \sum(rx - \bar{rx})^2$
+against the historical mean $\bar{rx}$ (Campbell & Thompson, 2008); the Clark
+& West (2007) test of equal accuracy for nested models, one-sided, with a
+Newey–West variance with 12 lags because returns formed in consecutive months
+overlap by eleven; and the Mincer–Zarnowitz slope of realized on forecast
+returns (1 for a calibrated forecast, 0 for one without information).
+
+### 6.3 Replicating the published ACM premium
+
+The New York Fed publishes ACM's own estimates (`data.load_acm_term_premium`),
+from the model estimated on the Fed's GSW curve since 1961. Running this
+package's implementation on the same curve and sample checks the code; running
+it on this engine's curves since 1990 shows how much the curve and the sample
+change the answer. On the Fed's curve since 1961 the two move one for one
+(correlation 1.000, 12-month changes 0.999) with a constant 20 bp offset in
+the split; from 1990 the same code averages 1.72% instead of 0.86%, so the
+sample start, not the curve, explains most of plain ACM's gap to Kim–Wright
+([results](results.md#checked-against-the-new-york-feds-own-acm-series)).
+
 ## 7. Real yields and breakeven inflation
 
 FRED publishes TIPS constant-maturity real yields at 5, 7, 10, 20 and 30 years
@@ -683,10 +739,14 @@ maturities, and nothing below five years is quoted or reported.
 ## References
 
 * Adrian, T., Crump, R. & Moench, E. (2013). Pricing the term structure with linear regressions. *Journal of Financial Economics*.
-* Bauer, M., Rudebusch, G. & Wu, J. C. (2012). Correcting estimation bias in dynamic term structure models. *Journal of Business & Economic Statistics*.
 * Bates, J. & Granger, C. (1969). The combination of forecasts. *Operational Research Quarterly*.
+* Bauer, M., Rudebusch, G. & Wu, J. C. (2012). Correcting estimation bias in dynamic term structure models. *Journal of Business & Economic Statistics*.
 * Beaton, A. & Tukey, J. (1974). The fitting of power series, meaning polynomials, illustrated on band-spectroscopic data. *Technometrics*.
+* Campbell, J. & Thompson, S. (2008). Predicting excess stock returns out of sample: can anything beat the historical average? *Review of Financial Studies*.
 * Christensen, J., Diebold, F. & Rudebusch, G. (2011). The affine arbitrage-free class of Nelson–Siegel term structure models. *Journal of Econometrics*.
+* Cieslak, A. (2018). Short-rate expectations and unexpected returns in Treasury bonds. *Review of Financial Studies*.
+* Clark, T. & West, K. (2007). Approximately normal tests for equal predictive accuracy in nested models. *Journal of Econometrics*.
+* Cochrane, J. & Piazzesi, M. (2005). Bond risk premia. *American Economic Review*.
 * Diebold, F. & Li, C. (2006). Forecasting the term structure of government bond yields. *Journal of Econometrics*.
 * Diebold, F. & Mariano, R. (1995). Comparing predictive accuracy. *Journal of Business & Economic Statistics*.
 * Diebold, F., Rudebusch, G. & Aruoba, S. B. (2006). The macroeconomy and the yield curve: a dynamic latent factor approach. *Journal of Econometrics*.
@@ -694,6 +754,7 @@ maturities, and nothing below five years is quoted or reported.
 * Durbin, J. & Koopman, S. J. (2012). *Time Series Analysis by State Space Methods*, 2nd ed. Oxford University Press.
 * Engstrom, E. & Sharpe, S. (2019). The near-term forward yield spread as a leading indicator: a less distorted mirror. *Financial Analysts Journal*.
 * Estrella, A. & Mishkin, F. (1998). Predicting U.S. recessions: financial variables as leading indicators. *Review of Economics and Statistics*.
+* Fama, E. & Bliss, R. (1987). The information in long-maturity forward rates. *American Economic Review*.
 * Gilli, M., Große, S. & Schumann, E. (2010). Calibrating the Nelson–Siegel–Svensson model. COMISEF working paper.
 * Golub, G. & Pereyra, V. (1973). The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate. *SIAM Journal on Numerical Analysis*.
 * Gürkaynak, R., Sack, B. & Wright, J. (2007). The U.S. Treasury yield curve: 1961 to the present. *Journal of Monetary Economics*.
@@ -701,17 +762,19 @@ maturities, and nothing below five years is quoted or reported.
 * Harvey, D., Leybourne, S. & Newbold, P. (1997). Testing the equality of prediction mean squared errors. *International Journal of Forecasting*.
 * Ho, T. (1992). Key rate durations: measures of interest rate risks. *Journal of Fixed Income*.
 * Huber, P. (1964). Robust estimation of a location parameter. *Annals of Mathematical Statistics*.
-* Kim, D. & Wright, J. (2005). An arbitrage-free three-factor term structure model and the recent behavior of long-term yields and distant-horizon forward rates. Federal Reserve Board FEDS 2005-33.
 * Kilian, L. (1998). Small-sample confidence intervals for impulse response functions. *Review of Economics and Statistics*.
 * Kim, D. & Orphanides, A. (2012). Term structure estimation with survey data on interest rate forecasts. *Journal of Financial and Quantitative Analysis*.
+* Kim, D. & Wright, J. (2005). An arbitrage-free three-factor term structure model and the recent behavior of long-term yields and distant-horizon forward rates. Federal Reserve Board FEDS 2005-33.
 * Künsch, H. (1989). The jackknife and the bootstrap for general stationary observations. *Annals of Statistics*.
 * Litterman, R. & Scheinkman, J. (1991). Common factors affecting bond returns. *Journal of Fixed Income*.
+* Mincer, J. & Zarnowitz, V. (1969). The evaluation of economic forecasts. In *Economic Forecasts and Expectations*. NBER.
 * Nelson, C. & Siegel, A. (1987). Parsimonious modeling of yield curves. *Journal of Business*.
 * Newey, W. & West, K. (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. *Econometrica*.
 * Philadelphia Fed (1968–). Survey of Professional Forecasters. Federal Reserve Bank of Philadelphia.
 * Pope, A. (1990). Biases of estimators in multivariate non-Gaussian autoregressions. *Journal of Time Series Analysis*.
 * Rosenberg, J. & Maurer, S. (2008). Signal or noise? Implications of the term premium for recession forecasting. *FRBNY Economic Policy Review*.
 * Svensson, L. (1994). Estimating and interpreting forward interest rates: Sweden 1992–1994. NBER Working Paper 4871.
+* Thornton, D. & Valente, G. (2012). Out-of-sample predictions of bond excess returns and forward rates: an asset allocation perspective. *Review of Financial Studies*.
 * Timmermann, A. (2006). Forecast combinations. In *Handbook of Economic Forecasting*, vol. 1. Elsevier.
 * Van Loan, C. (1978). Computing integrals involving the matrix exponential. *IEEE Transactions on Automatic Control*.
 * Willner, R. (1996). A new tool for portfolio managers: level, slope, and curvature durations. *Journal of Fixed Income*.

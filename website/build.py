@@ -150,6 +150,8 @@ hr { border: 0; border-top: 1px solid var(--rule); margin: 40px 0; }
 .doc table, .doc pre, .doc .MathJax { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
 .doc pre, .doc code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .doc img { border-radius: 4px; }
+.doc p code, .doc li code, .doc td code { overflow-wrap: anywhere; }
+mjx-container[display="true"] { display: block; overflow-x: auto; overflow-y: hidden; max-width: 100%; }
 .toc { font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 .toc p { margin: 0 0 8px; color: var(--ink-2); }
 .toc summary { cursor: pointer; color: var(--ink-2); font-weight: 600; margin-bottom: 6px; }
@@ -179,6 +181,8 @@ footer a { color: var(--ink-2); }
   h1 { font-size: 30px; } h2 { font-size: 23px; margin-top: 44px; }
   .lead { font-size: 18.5px; }
   .doc { font-size: 17px; }
+  /* long inline equations scroll sideways; on a list, so the markers stay in its padding */
+  .doc p, .doc ul, .doc ol { overflow-x: auto; overflow-y: hidden; }
   .nav .inner { gap: 14px; }
   .nav .brand span { display: none; }
   .ledger .chg, .ledger th.chg { display: none; }
@@ -707,6 +711,10 @@ that; a bias-corrected version made it worse.</li>
 <li>Splitting the slope into expected rates and term premium predicted
 recessions <i>worse</i> than the plain slope since 2005. The 2022-24 inversion pushed the real-time
 model to 90% and no recession has followed so far.</li>
+<li>The survey-anchored term premium, the one closest to the Fed Board's, did not predict what
+bonds went on to earn: forecasters kept expecting rate rises that never came, so it expected
+bonds to lose to bills while they beat them. A famous bond-return predictor (Cochrane-Piazzesi)
+did far worse than the plain historical average once re-estimated in real time.</li>
 <li>Version 2.2 said the arbitrage-free model had better-calibrated
 forecast intervals. A proper coverage test showed they are too wide, and the claim was withdrawn.</li>
 </ul>
@@ -761,6 +769,8 @@ def landing(s: dict[str, Any], site: Path) -> str:
   <a class="button" href="dashboard.html">Open the interactive dashboard</a>
   <a href="results.html">How accurate is it?</a>
   <a href="{REPO}">Source code</a>
+  <span class="install"><code>pip install nss-engine</code><button type="button"
+    data-copy="pip install nss-engine" aria-label="Copy the install command">Copy</button></span>
 </div>
 
 <h2>Latest reading</h2>
@@ -862,12 +872,22 @@ def add_nav_to_dashboard(path: Path) -> bool:
         '<img src="favicon.svg" alt="">NSS Yield Curve Engine</a>'
         f'{links}<a href="{REPO}">GitHub</a></div></nav>'
     )
+    desc = (
+        "Interactive dashboard of the U.S. Treasury yield curve: fits, term premium, "
+        "breakevens, recession odds and forecasts."
+    )
+    image = f"{SITE}img/social.png"
     head_extra = (
         f'{_DASH_NAV_CSS}\n<link rel="icon" href="favicon.svg" type="image/svg+xml">\n'
-        '<meta name="description" content="Interactive dashboard of the U.S. Treasury yield curve: '
-        'fits, term premium, breakevens, recession odds and forecasts.">\n'
-        f'<meta property="og:image" content="{SITE}img/social.png">\n'
+        f'<meta name="description" content="{desc}">\n'
+        '<meta property="og:type" content="website">\n'
+        '<meta property="og:site_name" content="NSS Yield Curve Engine">\n'
+        '<meta property="og:title" content="Dashboard · NSS Yield Curve Engine">\n'
+        f'<meta property="og:description" content="{desc}">\n'
+        f'<meta property="og:url" content="{SITE}dashboard.html">\n'
+        f'<meta property="og:image" content="{image}">\n'
         '<meta name="twitter:card" content="summary_large_image">\n'
+        f'<meta name="twitter:image" content="{image}">\n'
     )
     text = text.replace("</head>", head_extra + "</head>", 1)
     text = re.sub(r"<body([^>]*)>", lambda m: f"<body{m.group(1)}>{bar}", text, count=1)

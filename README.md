@@ -77,6 +77,16 @@ tables and tests are in **[docs/results.md](docs/results.md)**.
   of Kim–Wright (plain ACM: 123 bp) and tracks a model-free survey premium
   best (correlation 0.89). Estimated in real time it agrees 0.91–0.94 with
   its own full-sample series; plain ACM 0.43–0.70.
+- **Checked against the source.** Run on the Fed's curve since 1961, as
+  its authors do, the engine's ACM code moves one for one with the New York
+  Fed's published term premium (correlation 1.000, a constant 20 bp offset).
+  Starting in 1990 instead adds about 65 bp, which is most of plain ACM's gap
+  to Kim–Wright.
+- **Bond returns.** Plain ACM's real-time premium and the Fama–Bliss
+  forward spread predict one-year returns on the 10-year bond out of sample
+  (R² 8.8% and 7.6%, p ≤ 0.02). The survey-anchored premium does not: the
+  surveys kept expecting rate rises that never came, so it expected bonds to
+  lose to bills while they beat them.
 - **Breakeven inflation.** Against the Fed's own TIPS curve, the engine's
   5y5y breakeven is closer (20 bp RMSE) than FRED's published `T5YIFR` (27 bp,
   9 bp too low on average). On simulated markets it beats FRED's formulas at
@@ -92,14 +102,15 @@ Several things did not work, and the results page keeps them: robust
 fitting moves the curve *away* from the Fed's, bias-corrected VARs make the
 real-time premium worse, splitting the slope into expectations and term
 premium (Rosenberg & Maurer) predicts recessions worse than the plain spread
-since 2005, and the arbitrage-free model's forecast intervals are
-significantly too wide.
+since 2005, the Cochrane–Piazzesi bond-return factor does far worse than the
+historical average out of sample, and the arbitrage-free model's forecast
+intervals are significantly too wide.
 
 ## What it does
 
 - Data: FRED's 11 Treasury constant-maturity yields, TIPS real yields,
   NBER recessions and Kim–Wright; the Fed's GSW nominal and TIPS curves; the
-  Philadelphia Fed's SPF. Cached, retried, and read from the cache when a
+  New York Fed's ACM term premium; the Philadelphia Fed's SPF. Cached, retried, and read from the cache when a
   source is down.
 - Calibration: NSS fitted to par yields by variable projection, an
   exhaustive grid over the decay rates and multi-start refinement with an
@@ -107,7 +118,8 @@ significantly too wide.
   About 26 ms per curve.
 - Term premium: Adrian–Crump–Moench, plain or with expectations anchored
   to surveys (the default) or bias-corrected; full sample and re-estimated
-  month by month.
+  month by month; checked against the New York Fed's published series and
+  against the excess returns bonds went on to earn.
 - Inflation: TIPS real curve, zero-coupon and 5y5y forward breakevens,
   compared with FRED and the Fed.
 - Recessions: NY Fed-style probit, the near-term forward spread
@@ -140,6 +152,11 @@ from nss_engine.data import load_tips_yields
 from nss_engine.inflation import breakevens, fit_real_curve
 real = fit_real_curve(load_tips_yields())              # TIPS real curve, weekly since 2003
 breakevens(fit.params, real.params).tail()             # 5Y, 10Y and 5y5y breakeven inflation
+
+from nss_engine.returns import excess_returns
+zeros = zero_panel(fit.params)
+excess_returns(zeros).tail()                           # what 2/5/10-year bonds earned over bills
+acm.expected_excess_returns().tail()                   # what the model expected them to earn
 ```
 
 More in [`examples/quickstart.py`](examples/quickstart.py) (risk, carry,
@@ -192,7 +209,8 @@ a 3-D Plotly surface. 1.0 rebuilt it; 2.0 fitted the quotes as what they are
 (par yields) and checked the result against the Federal Reserve; 2.1 put error
 bars on the headline claims and withdrew one; 2.2 added the term premium and
 arbitrage-free dynamics; 2.3 survey anchors and significance tests; 2.4
-breakeven inflation and this website. The [CHANGELOG](CHANGELOG.md) lists what
+breakeven inflation and this website; 2.5 the check against the New York
+Fed's series and against realized bond returns. The [CHANGELOG](CHANGELOG.md) lists what
 was wrong in each version and how it was fixed.
 
 If you use it, please cite it ([CITATION.cff](CITATION.cff)). References are

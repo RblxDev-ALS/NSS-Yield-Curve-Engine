@@ -20,8 +20,11 @@ The part I would most like an expert's view on is the term premium. The
 standard ACM model is unstable when re-estimated in real time, so I anchored
 its expected short rates to the Survey of Professional Forecasters, as Kim
 and Orphanides do. That brings it within 28 basis points of the Fed Board's
-Kim-Wright estimate, against 123 for the plain model. The method and tests
-are on the results page:
+Kim-Wright estimate, against 123 for the plain model. But when I scored both
+against the bond returns that followed, the anchored premium did worse,
+because the surveys kept forecasting rate rises that never came. I'd like to
+know whether I am reading that tension correctly. The method and tests are on
+the results page:
 https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/results.html
 
 Would you have 15 minutes in office hours in the next few weeks to tell me

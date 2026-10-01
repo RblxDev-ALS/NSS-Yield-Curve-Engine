@@ -19,6 +19,7 @@ def test_tour_notebook_is_valid_python():
 def test_tour_notebook_uses_existing_api():
     import nss_engine.analytics as analytics
     import nss_engine.regime as regime
+    import nss_engine.returns as returns
     import nss_engine.termpremium as termpremium
 
     for mod, name in [
@@ -26,6 +27,8 @@ def test_tour_notebook_uses_existing_api():
         (termpremium, "zero_panel"),
         (regime, "recession_probability_model"),
         (analytics, "risk_report"),
+        (returns, "excess_returns"),
+        (termpremium.ACMResult, "expected_excess_returns"),
     ]:
         assert hasattr(mod, name)
 
@@ -49,3 +52,31 @@ def test_version_is_the_same_everywhere():
     )
     assert pyproject and citation and changelog
     assert pyproject.group(1) == nss_engine.__version__ == citation.group(1) == changelog.group(1)
+
+
+def test_author_is_the_same_everywhere():
+    # PyPI, the citation file and the website footer must name the same person;
+    # to add your real name, change all three (CITATION.cff: given-names and
+    # family-names, keeping the alias)
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    pyproject = re.search(
+        r'^authors = \[\{ name = "([^"]+)"',
+        (root / "pyproject.toml").read_text(encoding="utf-8"),
+        re.M,
+    )
+    website = re.search(
+        r'^AUTHOR = "([^"]+)"', (root / "website" / "build.py").read_text(encoding="utf-8"), re.M
+    )
+    cff = (root / "CITATION.cff").read_text(encoding="utf-8")
+    given = re.search(r"given-names: \"?([^\"\n]+)", cff)
+    family = re.search(r"family-names: \"?([^\"\n]+)", cff)
+    alias = re.search(r"alias: \"?([^\"\n]+)", cff)
+    if given and family:
+        cited = f"{given.group(1).strip()} {family.group(1).strip()}"
+    else:
+        assert alias, "CITATION.cff needs given-names and family-names, or an alias"
+        cited = alias.group(1).strip()
+    assert pyproject and website
+    assert pyproject.group(1) == website.group(1) == cited

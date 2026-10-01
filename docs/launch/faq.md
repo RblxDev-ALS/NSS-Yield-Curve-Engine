@@ -42,6 +42,32 @@ structure model at all, and the survey-anchored estimate agrees with it better
 known, surveys cut the real-time error from 82 to 13 bp, even surveys biased
 by half a point help (53 bp).
 
+**"Is your ACM even implemented correctly? The NY Fed publishes it."**
+Yes, and the project checks against it. Run on the Fed's own curve since 1961,
+as ACM do, this package's code moves one for one with the published 10-year
+premium (correlation 1.000, 12-month changes 0.999) with a constant 20 bp
+offset. Starting the same model in 1990 instead adds about 65 bp: that, not
+the code, is why plain ACM on 1990–2026 data sits a point above Kim–Wright.
+
+**"A term premium is an expected return. Does yours predict returns?"**
+Tested in 2.5 (docs/results.md, "Do term premia predict bond returns?").
+For one-year returns on the 10-year bond, 2000–2025, forecasts made in real
+time: plain ACM's premium beats the historical mean (R² OOS 8.8%, Clark–West
+p = 0.005), as does the Fama–Bliss forward spread (7.6%, p = 0.017), in both
+halves of the sample. The survey-anchored one, which matches Kim–Wright best,
+does not: it expected bonds to lose to bills (−0.2% a year) while they beat
+them by 2.5% a year, because the SPF kept forecasting rate rises that never
+came (too high 65–76% of the time; the ten-year forecast too high in all 16
+surveys checked). That is Cieslak's (2018) point about bond "risk premia".
+Cochrane–Piazzesi explains 22% in sample and loses badly out of sample.
+
+**"So which term premium is right?"**
+They answer different questions. The survey-anchored one is the better
+estimate of what investors expected (it agrees with Kim–Wright and with a
+model-free survey premium); plain ACM's is the better predictor of what bonds
+then earned over 2000–2025, partly because the fall in rates it learned from
+the 1990s kept going. Neither is a trading signal with 25 independent years of data.
+
 **"Did you try the bias-corrected VAR (Bauer–Rudebusch–Wu)?"**
 Yes, analytic and bootstrap. On real data it barely moves the level (RMSE vs
 Kim–Wright 113–117 bp) and makes 12-month changes worse (correlation 0.37–0.46

@@ -962,6 +962,95 @@ _DARK_JS = """
 """
 
 
+# On a phone (plot narrower than 520 px) wrap the titles, move the legends under the plot
+# and zoom the 3-D surface out, so nothing overlaps or runs off the card.
+_PHONE_JS = r"""
+(function(){
+  const NARROW = 520;
+  function wrap(t, n){
+    return String(t).split('<br>').map(function(part){
+      const out = []; let line = '';
+      part.split(' ').forEach(function(w){
+        if (line && (line + ' ' + w).length > n) { out.push(line); line = w; }
+        else { line = line ? line + ' ' + w : w; }
+      });
+      if (line) out.push(line);
+      return out.join('<br>');
+    }).join('<br>');
+  }
+  const rows = function(t){ return String(t).split('<br>').length; };
+  function adapt(el){
+    if (!el.layout || !el.data || el.clientWidth === 0) return;
+    const w = el.clientWidth, narrow = w < NARROW;
+    if (el._phone === narrow) return;
+    el._phone = narrow;
+    const L = el.layout, m = L.margin || {};
+    const anns = (L.annotations || []).map(function(a, i){ return [a, i]; }).filter(function(p){
+      return !p[0].showarrow && p[0].xref === 'paper' && p[0].yref === 'paper' && p[0].text; });
+    if (!el._wide) {
+      el._wide = {
+        'title.text': L.title && L.title.text, 'title.font.size': L.title && L.title.font && L.title.font.size,
+        'title.yref': 'paper', 'title.y': L.title && L.title.y, 'title.yanchor': 'auto',
+        'margin.t': m.t, 'margin.b': m.b,
+        'legend.font.size': null, 'legend.yref': 'paper', 'legend.y': L.legend && L.legend.y,
+        'legend.yanchor': L.legend && L.legend.yanchor
+      };
+      anns.forEach(function(p){ el._wide['annotations[' + p[1] + '].text'] = p[0].text;
+                                el._wide['annotations[' + p[1] + '].font.size'] = p[0].font && p[0].font.size; });
+      Object.keys(L).forEach(function(k){
+        if (/^xaxis\d*$/.test(k) && L[k].title && L[k].title.text) el._wide[k + '.title.font.size'] = L[k].title.font && L[k].title.font.size;
+      });
+      (L.updatemenus || []).forEach(function(u, i){
+        el._wide['updatemenus[' + i + '].x'] = u.x; el._wide['updatemenus[' + i + '].xanchor'] = u.xanchor;
+        el._wide['updatemenus[' + i + '].y'] = u.y; el._wide['updatemenus[' + i + '].yanchor'] = u.yanchor;
+      });
+      if (L.scene && L.scene.camera && L.scene.camera.eye) el._wide['scene.camera.eye'] = L.scene.camera.eye;
+    }
+    if (!narrow) { Plotly.relayout(el, el._wide); return; }
+    const hasTitle = L.title && L.title.text;
+    const text = hasTitle ? wrap(L.title.text, Math.max(16, Math.floor((w - 24) / 7.6))) : '';
+    const titleH = hasTitle ? 12 + rows(text) * 18 : 0;
+    const menus = (L.updatemenus || []).length ? 38 : 0;
+    const first = {'legend.font.size': 11};
+    if (hasTitle) { first['title.text'] = text; first['title.font.size'] = 14; }
+    // subplot titles: smaller, wrapped to the width of their column
+    const topY = anns.reduce(function(mx, p){ return Math.max(mx, p[0].y); }, 0);
+    const across = anns.filter(function(p){ return Math.abs(p[0].y - topY) < 0.01; }).length || 1;
+    let annLines = 0;
+    anns.forEach(function(p){
+      const t = wrap(p[0].text, Math.max(10, Math.floor((w - 70) / across / 6)));
+      first['annotations[' + p[1] + '].text'] = t; first['annotations[' + p[1] + '].font.size'] = 11;
+      if (Math.abs(p[0].y - topY) < 0.01) annLines = Math.max(annLines, rows(t));
+    });
+    Object.keys(L).forEach(function(k){
+      if (/^xaxis\d*$/.test(k) && L[k].title && L[k].title.text) first[k + '.title.font.size'] = 11; });
+    const hasLegend = el.data.some(function(t){ return t.showlegend !== false && t.name; }) && L.showlegend !== false;
+    Plotly.relayout(el, first).then(function(){
+      const g = el.querySelector('.legend');
+      const legH = (hasLegend && g) ? Math.ceil(g.getBoundingClientRect().height) + 8 : 0;
+      const hasX = Object.keys(L).some(function(k){ return /^xaxis\d*$/.test(k) && L[k].title && L[k].title.text; });
+      const H = el.clientHeight;
+      const upd = {'margin.t': titleH + menus + annLines * 14 + (L.scene ? 0 : 10),
+                   'margin.b': (L.scene ? 0 : (hasX ? 56 : 36)) + legH};
+      if (hasTitle) { upd['title.yref'] = 'container'; upd['title.y'] = 1 - 18 / H; upd['title.yanchor'] = 'bottom'; }
+      if (legH) { upd['legend.yref'] = 'container'; upd['legend.y'] = 0; upd['legend.yanchor'] = 'bottom'; upd['legend.x'] = 0; }
+      (L.updatemenus || []).forEach(function(u, i){
+        upd['updatemenus[' + i + '].x'] = 0; upd['updatemenus[' + i + '].xanchor'] = 'left';
+        upd['updatemenus[' + i + '].y'] = 1; upd['updatemenus[' + i + '].yanchor'] = 'bottom';
+      });
+      if (L.scene && L.scene.camera && L.scene.camera.eye) {
+        const e = L.scene.camera.eye; upd['scene.camera.eye'] = {x: e.x * 1.75, y: e.y * 1.75, z: e.z * 1.75};
+      }
+      Plotly.relayout(el, upd);
+    });
+  }
+  function run(){ document.querySelectorAll('.js-plotly-plot').forEach(adapt); }
+  window.addEventListener('load', function(){ setTimeout(run, 0); });
+  window.addEventListener('resize', run);
+})();
+"""
+
+
 def _table_html(df: pd.DataFrame, floatfmt: str = "{:.2f}") -> str:
     return df.to_html(float_format=lambda v: floatfmt.format(v), border=0, na_rep="–", escape=True)
 
@@ -1272,7 +1361,7 @@ Not investment advice.</footer>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NSS Yield Curve Dashboard</title>
 <style>{_CSS}</style></head>
-<body><main>{body}</main><script>{_DARK_JS}</script></body></html>"""
+<body><main>{body}</main><script>{_DARK_JS}</script><script>{_PHONE_JS}</script></body></html>"""
     out = Path(path)
     out.write_text(page, encoding="utf-8")
     return out

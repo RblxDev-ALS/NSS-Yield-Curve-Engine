@@ -25,6 +25,7 @@ from .calibration import (
 from .data import (
     DataError,
     label_columns,
+    load_acm_term_premium,
     load_breakevens,
     load_gsw_parameters,
     load_gsw_tips_parameters,
@@ -430,6 +431,10 @@ def _term_premium(
     if cfg.source == "fred":
         with contextlib.suppress(DataError):
             bench["Kim-Wright (Fed Board)"] = load_kim_wright_term_premium(cfg.start, cfg.end)
+        with contextlib.suppress(DataError, ImportError, KeyError):
+            nyfed = load_acm_term_premium(cfg.start, cfg.end)["term_premium"].dropna()
+            if len(nyfed):
+                bench["ACM (New York Fed)"] = nyfed
     if gsw is not None:
         try:
             gsw_acm = termpremium.fit_acm(termpremium.zero_panel(gsw.loc[fit.params.index[0] :]))
