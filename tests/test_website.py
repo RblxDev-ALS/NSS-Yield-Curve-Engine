@@ -62,6 +62,13 @@ def test_build_site(tmp_path):
     assert "MathJax" in methodology and "On this page" in methodology
     dashboard = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert dashboard.count('class="sitenav"') == 1
+    for tag in ("og:title", "og:description", "og:url", "og:image", "twitter:image"):
+        assert tag in dashboard  # link previews of the dashboard
+    assert 'content="https://' in dashboard.split('property="og:url"')[1].split(">")[0]
+    assert "_phone" in dashboard  # phone layout for the charts (legends under the plot)
+    # wide equations and code scroll or wrap instead of widening the phone page
+    css = (tmp_path / "style.css").read_text(encoding="utf-8")
+    assert 'mjx-container[display="true"]' in css and "overflow-wrap: anywhere" in css
     site_build.build(tmp_path)  # rebuilding does not add a second navigation bar
     dashboard = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert dashboard.count('class="sitenav"') == 1
