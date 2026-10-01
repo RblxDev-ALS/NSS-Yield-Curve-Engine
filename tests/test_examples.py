@@ -19,6 +19,7 @@ def test_tour_notebook_is_valid_python():
 def test_tour_notebook_uses_existing_api():
     import nss_engine.analytics as analytics
     import nss_engine.regime as regime
+    import nss_engine.returns as returns
     import nss_engine.termpremium as termpremium
 
     for mod, name in [
@@ -26,6 +27,8 @@ def test_tour_notebook_uses_existing_api():
         (termpremium, "zero_panel"),
         (regime, "recession_probability_model"),
         (analytics, "risk_report"),
+        (returns, "excess_returns"),
+        (termpremium.ACMResult, "expected_excess_returns"),
     ]:
         assert hasattr(mod, name)
 

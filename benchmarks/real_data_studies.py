@@ -401,8 +401,17 @@ def return_predictability_study(
             sc = bond_returns.evaluate_return_forecasts(
                 y.loc[common], f.loc[common], bench.loc[common], horizon
             )
+            half = common[len(common) // 2]
+            early, late = (
+                bond_returns.evaluate_return_forecasts(
+                    y.loc[idx], f.loc[idx], bench.loc[idx], horizon
+                ).r2_oos
+                for idx in (common[common < half], common[common >= half])
+            )
             rows[(f"{n // 12}Y", name)] = {
                 "R² OOS (%)": 100 * sc.r2_oos,
+                "1st half": 100 * early,
+                "2nd half": 100 * late,
                 "CW p": sc.p_value,
                 "slope": sc.mz_slope,
                 "slope se": sc.mz_slope_se,
@@ -413,7 +422,9 @@ def return_predictability_study(
         first, last = common[0], common[-1]
     table = pd.DataFrame(rows).T
     table.index.names = ["bond", "forecast"]
-    print(f"Forecast origins {first:%Y-%m} to {last:%Y-%m}.\n")
+    print(
+        f"Forecast origins {first:%Y-%m} to {last:%Y-%m}; the halves split them at {half:%Y-%m}.\n"
+    )
     print(table.to_markdown(floatfmt=".3f"))
     insample = {}
     for n in mats:
