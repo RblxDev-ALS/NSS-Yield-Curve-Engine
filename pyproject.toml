@@ -9,7 +9,7 @@ description = "U.S. Treasury yield curve engine: Nelson-Siegel-Svensson fits sin
 dynamic = ["readme"]
 # your name as it should appear on PyPI; keep it the same as in CITATION.cff and
 # website/build.py (AUTHOR) - tests/test_examples.py checks that they agree
-authors = [{ name = "RblxDev-ALS" }]
+authors = [{ name = "Musa Jafri" }]
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"

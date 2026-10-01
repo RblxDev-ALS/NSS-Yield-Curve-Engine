@@ -32,7 +32,7 @@ whether the approach is sound, or what you would check next? No worries at
 all if not.
 
 Thank you,
-[Your name]
+Musa Jafri
 [Year, major]
 
 ---
