@@ -1,60 +1,37 @@
 # r/quant
 
-**Title:** Fitting the Treasury curve since 1990 and testing every claim out of sample: par-yield bias, a survey-anchored term premium, and a random walk that still wins
+**Title:** I fitted the Treasury curve weekly since 1990 and checked it against the Fed's. Looking for critique of the term premium tests
 
 **Body:**
 
-I've been building an open-source yield curve engine (Python, MIT) and I'd
-like feedback on the methods and on how I've tested them. Everything runs on
-public data (FRED, the Fed's GSW curves, Kim–Wright, the Philadelphia Fed's
-SPF, NBER) and a GitHub Action reruns it every weekday.
+I've been working on an open-source Python project that fits a
+Nelson–Siegel–Svensson curve to FRED's Treasury yields every week since 1990
+and estimates the term premium, breakevens and recession odds from it. It
+reruns on public data every weekday. I'd like critique on the methods and
+the testing.
 
-**Curve fitting.** Nelson–Siegel–Svensson by variable projection (closed-form
-betas, exhaustive grid over the two decay rates, analytic-Jacobian refinement
-from every basin). The main lesson: FRED's CMT yields are semi-annual *par*
-yields, and fitting a zero curve straight to them is biased in a way the
-in-sample fit cannot show. Against the Fed's own curve, fitting par yields
-cuts the error from 16.3 to 10.0 bp (1–30y zeros, 440 month-ends); on a
-simulated market with a known truth, by 59%.
+A few results:
 
-**Term premium.** ACM (the NY Fed's model) on the engine's curves tracks ACM
-on the Fed's curve at 0.99 correlation, but plain ACM re-estimated each month
-on past data is unusable in real time (0.43–0.70 correlation with its own
-full-sample series). Anchoring expected short rates to SPF bill-rate forecasts
-fixes most of it:
+* FRED's constant-maturity yields are par yields. Fitting a zero curve
+  straight to them (which I did until 2.0) puts the curve 16.3 bp from the
+  Fed's GSW curve; fitting them as par yields gets it to 10.0 bp.
+* Plain ACM re-estimated each month is too unstable to use in real time
+  (0.43–0.70 correlation with its own full-sample series). Anchoring the
+  expected short rates to SPF bill-rate forecasts gets 0.91–0.94, and 28 bp
+  RMSE against Kim–Wright instead of 123 bp. On a simulated market with a
+  known premium, the real-time error drops from 82 to 13 bp.
+* Bias-corrected VARs didn't help; the stationarity cap binds in most
+  real-time months.
+* Nothing beats the random walk at forecasting yields one month ahead.
 
-| 10y premium | RMSE vs Kim–Wright | real time vs own full sample | known-truth real-time RMSE |
-|---|---:|---:|---:|
-| plain ACM | 123 bp | 0.43–0.70 | 82 bp |
-| bias-corrected (analytic / bootstrap) | 113 / 117 bp | worse vs KW | 81 / 84 bp |
-| survey-anchored | 28 bp | 0.91–0.94 | 13 bp |
+What I'm unsure about: the survey error model (one σ per SPF series, floored
+at 0.1 pp), whether 24-month blocks make sense for the AUC bootstrap, and
+what else you'd validate the term premium against.
 
-Bias-corrected VARs (Bauer–Rudebusch–Wu) were a negative result: the
-stationarity cap binds in 63–92% of real-time months.
+Results and tests: https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/docs/results.md
+Code: https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine
 
-**Recessions.** Probits scored in pseudo-real time with only recessions known
-at each date. The near-term forward spread beats 10Y−3M (AUC 0.71 vs 0.61),
-but the 90% block-bootstrap interval on the gain includes zero.
-Splitting the spread Rosenberg–Maurer style into expectations and term premium, both estimated in real time with survey anchors, was a negative result: from 2005 the expectations component was significantly *worse* than the plain spread (out-of-sample AUC 0.13 vs 0.45), and nothing beat a coin flip in that window (two recessions plus the 2022–24 inversion).
+---
 
-**Forecasting.** Diebold–Li, Kalman-filter DNS and AFNS all lose to the random
-walk at 1 month (DM p < 0.001). Half model, half random walk ties it at 6–12
-months (p ≥ 0.49). AFNS's intervals are significantly too wide at every
-horizon; I originally claimed the opposite and the coverage test corrected me.
-
-**Breakevens (new).** TIPS real curve and 5y5y forward breakevens from fitted
-zero curves. On simulated markets FRED's T5YIE/T5YIFR formulas are off by
-2.6 bp even with perfect quotes; the curve-based numbers are within 1 bp.
-On real data, against the Fed's own TIPS curve, the engine's 5y5y breakeven is 20 bp RMSE away vs 27 bp for FRED's T5YIFR (which is 9 bp too low on average); at 5 years FRED's series is slightly closer (12 vs 14 bp).
-
-Repo: https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine
-Live dashboard: https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/dashboard.html
-Detailed results: https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/docs/results.md
-
-What I'd most like critique on: the survey error model (one σ per SPF series,
-floored at 0.1 pp), whether 24-month blocks are sensible for the AUC
-bootstrap, and what else you'd validate the term premium against.
-
-*Posting notes: r/quant is strict about self-promotion; post on a weekday,
-lead with the methods question, answer comments with numbers, and link the
-results page rather than the dashboard first.*
+*Notes: r/quant is strict about self-promotion; check the rules on the day,
+lead with the question, and link the results page rather than the dashboard.*

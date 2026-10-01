@@ -3,22 +3,21 @@
 [![CI](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/ci.yml)
 [![Live dashboard](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml/badge.svg)](https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine/actions/workflows/live-dashboard.yml)
 [![PyPI](https://img.shields.io/pypi/v/nss-engine)](https://pypi.org/project/nss-engine/)
-![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/RblxDev-ALS/NSS-Yield-Curve-Engine/blob/main/examples/tour.ipynb)
 
-**What the U.S. Treasury curve says about rates, risk premia, inflation and
-recessions, measured every week since 1990 and tested out of sample,
-including the tests that failed.**
+Fits the U.S. Treasury yield curve every week since 1990 and splits it into
+the parts people argue about: where the Fed is expected to take rates, the
+term premium, inflation expectations and recession odds. Each estimate is
+checked on a simulated market where the answer is known, then against the
+Federal Reserve's own numbers.
 
-[![curve](https://img.shields.io/endpoint?url=https%3A%2F%2Frblxdev-als.github.io%2FNSS-Yield-Curve-Engine%2Fbadges%2Fregime.json)](https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/dashboard.html)
 [![recession odds](https://img.shields.io/endpoint?url=https%3A%2F%2Frblxdev-als.github.io%2FNSS-Yield-Curve-Engine%2Fbadges%2Frecession.json)](https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/dashboard.html)
 [![term premium](https://img.shields.io/endpoint?url=https%3A%2F%2Frblxdev-als.github.io%2FNSS-Yield-Curve-Engine%2Fbadges%2Fterm_premium.json)](https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/dashboard.html)
-[![breakeven](https://img.shields.io/endpoint?url=https%3A%2F%2Frblxdev-als.github.io%2FNSS-Yield-Curve-Engine%2Fbadges%2Fbreakeven.json)](https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/dashboard.html)
 [![data as of](https://img.shields.io/endpoint?url=https%3A%2F%2Frblxdev-als.github.io%2FNSS-Yield-Curve-Engine%2Fbadges%2Fas_of.json)](https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/)
 
-**[Live dashboard](https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/dashboard.html)** ·
 [Website](https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/) ·
+[Live dashboard](https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/dashboard.html) ·
 [Results](docs/results.md) · [Methodology](docs/methodology.md) ·
 [Research note](docs/par-vs-zero.md) · [Changelog](CHANGELOG.md)
 
@@ -28,15 +27,14 @@ including the tests that failed.**
 </picture>
 
 A Nelson–Siegel–Svensson curve fitted to FRED's Treasury yields every week
-since 1990: 36 years compressed into one picture, zero-rate years and
-inversions included.
+since 1990. The pale stretches are the zero-rate years.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/term_premium-dark.png">
   <img src="docs/img/term_premium.png" alt="10-year term premium estimated in real time: plain ACM, survey-anchored ACM and Kim-Wright">
 </picture>
 
-The 10-year **term premium** as it would have been estimated at each date,
+The 10-year term premium as it would have been estimated at each date,
 using only data published by then. The textbook model (ACM, blue) swings with
 every re-estimation and sits about a point above the Fed Board's Kim–Wright
 estimate (grey). Anchoring its expected rates to the Survey of Professional
@@ -49,10 +47,10 @@ On 24 September 2026: a 5.18% ten-year zero yield = 4.02% expected short rate
   <img src="docs/img/recession.png" alt="Probability of a U.S. recession within 12 months from the yield curve, with NBER recessions shaded">
 </picture>
 
-**Recession odds** from the curve, in sample and in pseudo-real time (only
+Recession odds from the curve, in sample and in pseudo-real time (only
 recessions known at each date). The 2022–24 inversion pushed the real-time
-model to 90% with no recession so far: four recessions since 1990 are not
-much to learn from.
+model to 90% and no recession has followed so far. Four recessions since 1990
+are not much to learn from.
 
 ## Install
 
@@ -71,31 +69,58 @@ in a browser, or `nss-engine run --source synthetic` offline.
 From the latest run of the live workflow on FRED data (1990–2026). Details,
 tables and tests are in **[docs/results.md](docs/results.md)**.
 
-| | |
-|---|---|
-| **Fitting the curve** | Median error **3.8 bp** over 1,917 weekly curves. **10.0 bp** from the Federal Reserve's own curve, against 16.3 bp the textbook way: FRED's yields are *par* yields, not the zero rates most Nelson–Siegel code assumes ([research note](docs/par-vs-zero.md)). |
-| **Term premium** | The survey-anchored 10-year premium is within **28 bp** RMSE of Kim–Wright (plain ACM: 123 bp) and tracks a model-free survey premium best (correlation 0.89). Estimated in real time it agrees **0.91–0.94** with its own full-sample series; plain ACM 0.43–0.70. |
-| **Breakeven inflation** | New: TIPS real curve, breakevens and the 5y5y forward. Against the Fed's own TIPS curve, the engine's 5y5y breakeven is closer (20 bp RMSE) than FRED's published `T5YIFR` (27 bp, 9 bp too low on average); on simulated markets it beats FRED's formulas at every maturity. |
-| **Recessions** | The near-term forward spread beats the classic 10Y−3M spread out of sample (AUC 0.71 vs 0.61), but with three recessions to score, the 90% interval on the gain includes zero. Splitting the spread into expected rates and term premium (Rosenberg & Maurer) does **not** help: from 2005 the expectations component is significantly *worse* than the spread. |
-| **Forecasts** | **The random walk still wins.** Every model loses to "no change" at 1 month (Diebold–Mariano p < 0.001); half model, half random walk only ties it at 6–12 months (p ≥ 0.49). |
+- **Fitting the curve.** Median error 3.8 bp over 1,917 weekly curves, and
+  10.0 bp from the Federal Reserve's own curve, against 16.3 bp the textbook
+  way. FRED's yields are *par* yields, not the zero rates most Nelson–Siegel
+  code assumes ([research note](docs/par-vs-zero.md)).
+- **Term premium.** The survey-anchored 10-year premium is within 28 bp RMSE
+  of Kim–Wright (plain ACM: 123 bp) and tracks a model-free survey premium
+  best (correlation 0.89). Estimated in real time it agrees 0.91–0.94 with
+  its own full-sample series; plain ACM 0.43–0.70.
+- **Breakeven inflation.** Against the Fed's own TIPS curve, the engine's
+  5y5y breakeven is closer (20 bp RMSE) than FRED's published `T5YIFR` (27 bp,
+  9 bp too low on average). On simulated markets it beats FRED's formulas at
+  every maturity.
+- **Recessions.** The near-term forward spread beats the classic 10Y−3M
+  spread out of sample (AUC 0.71 vs 0.61), but with three recessions to
+  score, the 90% interval on the gain includes zero.
+- **Forecasts.** Every model loses to "no change" at 1 month
+  (Diebold–Mariano p < 0.001); half model, half random walk only ties it at
+  6–12 months (p ≥ 0.49).
 
-Negative results stay in: robust fitting moves the curve *away* from the
-Fed's, bias-corrected VARs make the real-time premium worse, the
-expectations/term-premium split does not predict recessions, and the
-arbitrage-free model's forecast intervals are significantly too wide.
+Several things did not work, and the results page keeps them: robust
+fitting moves the curve *away* from the Fed's, bias-corrected VARs make the
+real-time premium worse, splitting the slope into expectations and term
+premium (Rosenberg & Maurer) predicts recessions worse than the plain spread
+since 2005, and the arbitrage-free model's forecast intervals are
+significantly too wide.
 
 ## What it does
 
-| | |
-|---|---|
-| **Data** | FRED's 11 Treasury constant-maturity yields, TIPS real yields, NBER recessions and Kim–Wright; the Fed's GSW nominal and TIPS curves; the Philadelphia Fed's SPF. Cached, retried, and falls back to the cache when a source is down. |
-| **Calibration** | NSS fitted to **par yields**: variable projection, an exhaustive grid over the decay rates, multi-start refinement with an analytic Jacobian, confidence bands, optional robust fitting. ~26 ms per curve. |
-| **Term premium** | Adrian–Crump–Moench, plain or with expectations **anchored to surveys** (default) or bias-corrected; full sample and re-estimated month by month. |
-| **Inflation** | TIPS real curve, zero-coupon and 5y5y forward breakevens, compared with FRED and the Fed. |
-| **Recessions** | NY Fed-style probit, the near-term forward spread (Engstrom & Sharpe), expectations vs premium (Rosenberg & Maurer), all scored in pseudo-real time with block-bootstrap intervals. |
-| **Forecasting** | Diebold–Li, state-space (Kalman filter, MLE) and arbitrage-free (AFNS) dynamic Nelson–Siegel, against the random walk, with Diebold–Mariano and coverage tests. |
-| **Risk and relative value** | Duration, convexity, key-rate and factor durations, carry and roll-down, rich/cheap z-scores without look-ahead. |
-| **Outputs** | Interactive dashboard (light/dark), Markdown report, CSV/JSON, PNG charts, shields.io badges, and a website rebuilt from live data every weekday. |
+- Data: FRED's 11 Treasury constant-maturity yields, TIPS real yields,
+  NBER recessions and Kim–Wright; the Fed's GSW nominal and TIPS curves; the
+  Philadelphia Fed's SPF. Cached, retried, and read from the cache when a
+  source is down.
+- Calibration: NSS fitted to par yields by variable projection, an
+  exhaustive grid over the decay rates and multi-start refinement with an
+  analytic Jacobian, with confidence bands and optional robust fitting.
+  About 26 ms per curve.
+- Term premium: Adrian–Crump–Moench, plain or with expectations anchored
+  to surveys (the default) or bias-corrected; full sample and re-estimated
+  month by month.
+- Inflation: TIPS real curve, zero-coupon and 5y5y forward breakevens,
+  compared with FRED and the Fed.
+- Recessions: NY Fed-style probit, the near-term forward spread
+  (Engstrom & Sharpe) and expectations vs premium (Rosenberg & Maurer), all
+  scored in pseudo-real time with block-bootstrap intervals.
+- Forecasting: Diebold–Li, state-space (Kalman filter, MLE) and
+  arbitrage-free (AFNS) dynamic Nelson–Siegel against the random walk, with
+  Diebold–Mariano and coverage tests.
+- Risk and relative value: duration, convexity, key-rate and factor
+  durations, carry and roll-down, rich/cheap z-scores without look-ahead.
+- Outputs: interactive dashboard (light/dark), Markdown report,
+  CSV/JSON, PNG charts, shields.io badges, and a website rebuilt from live
+  data every weekday.
 
 ## As a library
 
@@ -123,7 +148,7 @@ uncertainty bands) and the [notebook](examples/tour.ipynb).
 ## How it is tested
 
 Real market data has no "right answer", so every model is first checked on a
-**simulated market with a known truth**: a dynamic NSS market for the
+simulated market with a known truth: a dynamic NSS market for the
 calibrator, an arbitrage-free affine market with a known term premium and
 simulated surveys, and a TIPS market with a known breakeven curve. Then it is
 checked against independent estimates on real data: the Fed's curves,
@@ -135,12 +160,12 @@ Kim–Wright, FRED's breakevens.
   at 100, key-rate durations sum to duration), a brute-force check of the
   calibrator's global optimum, Jacobians against finite differences, and
   Kalman filters against a textbook implementation.
-* **No look-ahead**: scrambling every outcome, yield or survey published after
+* No look-ahead: scrambling every outcome, yield or survey published after
   a date leaves that date's real-time estimate unchanged.
 
 ## How the calibration works
 
-For fixed decay rates the NSS model is **linear in its four betas**, so the
+For fixed decay rates the NSS model is linear in its four betas, so the
 six-parameter fit becomes a two-dimensional search: closed-form betas for any
 $(\lambda_1, \lambda_2)$, an exhaustive grid over that plane to find every
 basin, then a local par-yield refinement from each basin with an analytic

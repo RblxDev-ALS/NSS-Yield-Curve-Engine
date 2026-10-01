@@ -166,7 +166,7 @@ def simulate_tips_market(
     """
     rng = np.random.default_rng(seed + 10_000)
     params = nominal.true_params if isinstance(nominal, SyntheticMarket) else nominal
-    true = params.loc[start:]
+    true = params.loc[params.index >= pd.Timestamp(start)]
     n = len(true)
     if n == 0:
         raise ValueError(f"the nominal market has no dates from {start}")

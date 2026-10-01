@@ -77,7 +77,7 @@ jobs:
       - name: Commit the charts to docs/img
         run: |
           mkdir -p docs/img
-          cp site/img/*.png docs/img/
+          cp site/img/{curve,term_premium,recession}*.png docs/img/  # not the social card
           git add docs/img
           if git diff --cached --quiet; then
             echo "charts unchanged"

@@ -36,9 +36,14 @@
   term premium (plain vs survey-anchored vs Kim–Wright) and recession
   probabilities, in light and dark versions, drawn from FRED data by the live
   workflow.
-* **Project website** (`website/build.py`): landing page with the latest
-  reading, the dashboard, and the results, methodology, research note and
-  changelog as HTML, published to GitHub Pages from `main`.
+* **Project website** (`website/build.py`): a landing page that states the
+  latest reading in words and as a table with year-on-year changes and
+  five-year sparklines, the three charts, what did not work, and the
+  project's history; the dashboard with the site's navigation; and the
+  results, methodology, research note and changelog as HTML with a contents
+  list. A favicon, a 404 page and a preview image with the latest numbers
+  (`img/social.png`) for links shared on social sites and in chats.
+  Published to GitHub Pages from `main`.
 * Real-data studies: the recession split test with plain and survey-anchored
   real-time premia (also with NBER dates known only 12 months late), and a
   breakeven study against FRED and the Fed's TIPS curve.

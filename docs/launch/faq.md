@@ -1,8 +1,9 @@
-# Likely criticism, and honest answers
+# Likely questions
 
-Draft answers for launch threads. Every number here is from the README,
-[docs/results.md](../results.md) or the live workflow; update them if a newer
-run changes them.
+The numbers you need to answer common questions in launch threads. Answer in
+your own words; these are notes, not replies to paste. Every number is from
+the README, [docs/results.md](../results.md) or the live workflow; update
+them if a newer run changes them.
 
 **"Nelson–Siegel is a 1987 model. Why not a spline / the Fed's curve / a neural net?"**
 NSS is still what central banks publish (the Fed's GSW curve is Svensson) and
@@ -86,3 +87,10 @@ optimality.
 About 26 ms per curve, so 36 years of weekly curves in about 70 s. The full
 pipeline with the real-time survey-anchored term premium takes a few minutes
 (`--fast` skips the month-by-month re-estimation).
+
+**"Did you use AI to build this?"**
+Answer this one honestly and in your own words: which tools you used, for
+what, and what you did yourself (the idea, the design choices, the checks
+against the Fed's numbers, the papers you read). Most people are fine with
+AI-assisted code they can see was tested; what goes badly is a denial that
+turns out not to be true.

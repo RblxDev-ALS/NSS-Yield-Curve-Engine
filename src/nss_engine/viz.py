@@ -901,7 +901,7 @@ header h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
 header p { margin: 0; color: var(--ink-2); }
 .banner { margin-top: 12px; padding: 10px 14px; border-radius: 8px; border:1px solid var(--border);
   background: var(--surface); color: var(--ink-2); }
-.tiles { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 24px 0; }
+.tiles { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 24px 0; }
 .tile { background: var(--surface); border:1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
 .tile .label { font-size: 13px; color: var(--ink-2); }
 .tile .value { font-size: 28px; font-weight: 600; margin-top: 2px; }
@@ -1205,7 +1205,7 @@ def build_dashboard(
 </header>
 <div class="tiles">{"".join(tiles)}</div>
 
-<section><h2>Today's curve</h2>
+<section><h2>The latest curve</h2>
 <p>Dots are observed constant-maturity yields; the line is the calibrated NSS curve. The forward curve shows
 the rates the market implies for future short-term borrowing.</p>
 {snapshot_html}
