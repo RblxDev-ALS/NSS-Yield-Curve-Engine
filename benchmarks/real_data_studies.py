@@ -26,6 +26,14 @@
    random-walk level, independent factors, and the arbitrage-free AFNS
    restriction (Christensen, Diebold & Rudebusch, 2011), against the random
    walk - point accuracy and the coverage of 80% forecast intervals.
+8. **Replicating the New York Fed's ACM term premium.** This package's ACM
+   code on the Fed's curve since 1961 (as ACM do), and on this engine's
+   curves since 1990, against the series the New York Fed publishes.
+9. **Do term premia predict bond returns?** One-year excess returns on 2-,
+   5- and 10-year zero-coupon bonds against the returns that ACM (plain and
+   survey-anchored) expected in real time, Fama-Bliss and Cochrane-Piazzesi
+   regressions, and the historical mean: out-of-sample R², Clark-West tests
+   and Mincer-Zarnowitz slopes.
 
 Usage::
 
@@ -42,6 +50,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from nss_engine import returns as bond_returns
 from nss_engine.calibration import (
     DEFAULT_PANEL_SMOOTHING,
     CalibrationConfig,
@@ -50,6 +59,7 @@ from nss_engine.calibration import (
 )
 from nss_engine.data import (
     DataError,
+    load_acm_term_premium,
     load_breakevens,
     load_gsw_parameters,
     load_gsw_tips_parameters,
@@ -244,7 +254,186 @@ def term_premium_study(
         "(ACM − Kim-Wright, bp). ACM's own choice is 5 factors on the Fed's curve.\n"
     )
     print(table.round(3).to_markdown())
-    return anchored_term_premium_study(curves["NSS curves (this engine)"], kw)
+    first_rt = anchored_term_premium_study(curves["NSS curves (this engine)"], kw)
+    spf = _surveys_or_none()
+    acm_replication_study(curves["NSS curves (this engine)"], kw, spf)
+    return_predictability_study(curves["NSS curves (this engine)"], kw, spf)
+    return first_rt
+
+
+def _surveys_or_none() -> pd.DataFrame | None:
+    try:
+        return load_spf_bill_forecasts()
+    except (DataError, ImportError):
+        return None
+
+
+def _month_end(s: pd.Series) -> pd.Series:
+    out = s.groupby(pd.DatetimeIndex(s.index).to_period("M")).last()
+    out.index = out.index.to_timestamp("M")
+    return out
+
+
+def acm_replication_study(nss: pd.DataFrame, kw: pd.Series, spf: pd.DataFrame | None) -> None:
+    """This package's ACM code against the New York Fed's published ACM term premium."""
+    t0 = time.perf_counter()
+    try:
+        nyfed = load_acm_term_premium()
+    except (DataError, ImportError) as exc:
+        print(f"\n(New York Fed ACM term premium unavailable: {exc})\n")
+        return
+    ny_tp = _month_end(nyfed["term_premium"].dropna())
+    ny_rn = (
+        _month_end(nyfed["expected_short_rate"].dropna())
+        if "expected_short_rate" in nyfed
+        else None
+    )
+    print(
+        "\n## Replicating the New York Fed's ACM term premium (10-year)\n\n"
+        f"New York Fed series: {ny_tp.index[0]:%Y-%m} to {ny_tp.index[-1]:%Y-%m}, "
+        f"mean {ny_tp.loc[nss.index[0] :].mean():.2f}% since {nss.index[0]:%Y-%m}. "
+        "All rows are compared over the months since then; gap = row − New York Fed.\n"
+    )
+    estimates: dict[str, tuple[pd.Series, pd.Series | None]] = {}
+    try:
+        gsw_all = load_gsw_parameters()
+    except DataError as exc:
+        print(f"(GSW curve unavailable: {exc})")
+        gsw_all = None
+    if gsw_all is not None:
+        long = zero_panel(gsw_all).dropna()
+        for label, zeros in (
+            (f"ACM code, Fed curve since {long.index[0]:%Y} (ACM's design)", long),
+            ("ACM code, Fed curve since 1990", long.loc[nss.index[0] :]),
+        ):
+            if len(zeros) < 120:
+                continue
+            d = fit_acm(zeros).decomposition(10)
+            estimates[label] = (d["term_premium"], d["expected_short_rate"])
+    d = fit_acm(nss).decomposition(10)
+    estimates["ACM code, this engine's curves since 1990"] = (
+        d["term_premium"],
+        d["expected_short_rate"],
+    )
+    if spf is not None:
+        d = fit_acm(nss, surveys=spf).decomposition(10)
+        estimates["survey-anchored, this engine's curves"] = (
+            d["term_premium"],
+            d["expected_short_rate"],
+        )
+    estimates["Kim-Wright"] = (kw, None)
+    rows = {}
+    start = nss.index[0]
+    for label, (tp, rn) in estimates.items():
+        stats = compare_term_premia(tp.loc[start:], ny_tp.loc[start:])
+        row = {
+            "mean TP (%)": float(tp.loc[start:].mean()),
+            "corr": stats["corr_level"],
+            "corr 12m chg": stats["corr_change_12m"],
+            "RMSE (bp)": stats["rmse_bp"],
+            "mean gap (bp)": stats["mean_gap_bp"],
+            "months": int(stats["n_months"]),
+        }
+        if rn is not None and ny_rn is not None:
+            row["RMSE exp. short rate (bp)"] = compare_term_premia(
+                rn.loc[start:], ny_rn.loc[start:]
+            )["rmse_bp"]
+        rows[label] = row
+    print(pd.DataFrame(rows).T.to_markdown(floatfmt=".3f"))
+    print(f"\n({time.perf_counter() - t0:.0f} s)")
+
+
+def return_predictability_study(
+    nss: pd.DataFrame, kw: pd.Series, spf: pd.DataFrame | None, horizon: int = 12
+) -> None:
+    """Do the term premium estimates predict the excess returns bonds went on to earn?"""
+    t0 = time.perf_counter()
+    mats = (24, 60, 120)
+    rx = bond_returns.excess_returns(nss, horizon, (24, 36, 48, 60, 120))
+    fwd = bond_returns.forward_rates(nss)
+    cp = bond_returns.cochrane_piazzesi_forecasts(rx, fwd, horizon)
+    kw_m = _month_end(kw).reindex(nss.index)
+    rt: dict[str, pd.DataFrame] = {
+        "ACM, plain": bond_returns.real_time_expected_returns(nss, horizon, mats, min_train=60)
+    }
+    if spf is not None:
+        rt["ACM, survey-anchored"] = bond_returns.real_time_expected_returns(
+            nss, horizon, mats, min_train=60, surveys=spf
+        )
+    full = {"ACM, plain": fit_acm(nss).expected_excess_returns(horizon, mats)}
+    if spf is not None:
+        full["ACM, survey-anchored"] = fit_acm(nss, surveys=spf).expected_excess_returns(
+            horizon, mats
+        )
+    print(
+        "\n## Do term premia predict bond returns?\n\n"
+        f"Realized {horizon}-month log excess returns on zero-coupon bonds (this engine's curves) "
+        "against forecasts made at the start of each holding period with data available then. "
+        "Benchmark: the historical mean of returns completed by then. R² OOS > 0 beats it; "
+        "Clark-West p-values are one-sided; slope = realized on forecast (1 = calibrated), "
+        "Newey-West standard errors for overlapping returns. Kim-Wright's parameters are "
+        "estimated on the full sample, so its row is not strictly real time.\n"
+    )
+    rows = {}
+    for n in mats:
+        col = n / 12.0
+        y = rx[col]
+        bench = bond_returns.real_time_regression_forecasts(y, None, horizon)
+        fcs: dict[str, pd.Series] = {}
+        for name, frame in rt.items():
+            fcs[f"{name}: model's expected return"] = frame[col]
+            fcs[f"{name}: regression on it"] = bond_returns.real_time_regression_forecasts(
+                y, frame[[col]], horizon
+            )
+            fcs[f"{name}: regression on 10Y term premium"] = (
+                bond_returns.real_time_regression_forecasts(y, frame[["term_premium"]], horizon)
+            )
+        fcs["Fama-Bliss forward spread"] = bond_returns.real_time_regression_forecasts(
+            y, bond_returns.forward_spot_spread(nss, n, horizon).to_frame(), horizon
+        )
+        fcs["Cochrane-Piazzesi factor"] = cp[col]
+        fcs["Kim-Wright 10Y term premium (regression)"] = (
+            bond_returns.real_time_regression_forecasts(y, kw_m.to_frame(), horizon)
+        )
+        # score every forecast on the same origins
+        common = pd.concat([y, bench, *fcs.values()], axis=1).dropna().index
+        for name, f in fcs.items():
+            sc = bond_returns.evaluate_return_forecasts(
+                y.loc[common], f.loc[common], bench.loc[common], horizon
+            )
+            rows[(f"{n // 12}Y", name)] = {
+                "R² OOS (%)": 100 * sc.r2_oos,
+                "CW p": sc.p_value,
+                "slope": sc.mz_slope,
+                "slope se": sc.mz_slope_se,
+                "mean fcst (%)": sc.mean_forecast,
+                "mean realized (%)": sc.mean_realized,
+                "origins": sc.n,
+            }
+        first, last = common[0], common[-1]
+    table = pd.DataFrame(rows).T
+    table.index.names = ["bond", "forecast"]
+    print(f"Forecast origins {first:%Y-%m} to {last:%Y-%m}.\n")
+    print(table.to_markdown(floatfmt=".3f"))
+    insample = {}
+    for n in mats:
+        col = n / 12.0
+        y = rx[col]
+        row = {}
+        for name, er in full.items():
+            both = pd.concat([y, er[col]], axis=1).dropna()
+            row[f"{name} (full-sample model)"] = float(both.corr().iloc[0, 1] ** 2)
+        both = pd.concat([y, fwd], axis=1).dropna()
+        Z = np.column_stack([np.ones(len(both)), both[fwd.columns].to_numpy()])
+        coef, *_ = np.linalg.lstsq(Z, both[col].to_numpy(), rcond=None)
+        resid = both[col].to_numpy() - Z @ coef
+        row["Cochrane-Piazzesi forwards (in sample)"] = float(
+            1 - resid.var() / both[col].to_numpy().var()
+        )
+        insample[f"{n // 12}Y"] = row
+    print("\nIn-sample R² for comparison (estimated on the whole sample, so with look-ahead):\n")
+    print(pd.DataFrame(insample).round(3).to_markdown())
+    print(f"\n({time.perf_counter() - t0:.0f} s)")
 
 
 def anchored_term_premium_study(nss: pd.DataFrame, kw: pd.Series) -> dict[str, pd.DataFrame]:

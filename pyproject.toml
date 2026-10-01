@@ -34,12 +34,14 @@ dependencies = [
 [project.optional-dependencies]
 surveys = [
     "openpyxl>=3.1",  # reads the Philadelphia Fed's Survey of Professional Forecasters files
+    "xlrd>=2.0",  # reads the New York Fed's ACM term premium workbook (.xls)
 ]
 figures = [
     "matplotlib>=3.7",  # static PNG charts (nss-engine run --figures)
 ]
 dev = [
     "openpyxl>=3.1",
+    "xlrd>=2.0",
     "matplotlib>=3.7",
     "pytest>=7.4",
     "pytest-cov>=4.1",
