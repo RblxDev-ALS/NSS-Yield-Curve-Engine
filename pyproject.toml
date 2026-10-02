@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nss-engine"
-version = "2.5.0"
+version = "2.5.1"
 description = "U.S. Treasury yield curve engine: Nelson-Siegel-Svensson fits since 1990, a survey-anchored term premium, breakeven inflation, recession signals and forecasts, all tested out of sample."
 dynamic = ["readme"]
 # your name as it should appear on PyPI; keep it the same as in CITATION.cff and
