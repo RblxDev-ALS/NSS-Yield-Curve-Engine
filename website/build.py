@@ -32,7 +32,7 @@ from typing import Any
 
 REPO = "https://github.com/RblxDev-ALS/NSS-Yield-Curve-Engine"
 SITE = "https://rblxdev-als.github.io/NSS-Yield-Curve-Engine/"
-AUTHOR = "RblxDev-ALS"
+AUTHOR = "Musa Jafri"
 AUTHOR_URL = "https://github.com/RblxDev-ALS"
 ROOT = Path(__file__).resolve().parents[1]
 

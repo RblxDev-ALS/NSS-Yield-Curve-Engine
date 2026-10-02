@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.5.1 — author name
+
+* The package metadata, `CITATION.cff` and the website name the author, Musa
+  Jafri (2.5.0 on PyPI lists only the GitHub handle). No code changes.
+
 ## 2.5.0 — do term premia predict bond returns? ACM checked against the New York Fed
 
 ### Added
